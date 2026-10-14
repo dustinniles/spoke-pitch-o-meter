@@ -179,7 +179,94 @@ export const ANALYSIS = {
   lateStart: 0.16, // s after onset for the sustain check
   lateWindow: 0.24,
   pre: 0.12,       // s of pre-onset audio used as the background reference
+  tail: 0.72,      // s of audio kept after onset, for tracking pitch glide
 };
+
+// --- Pitch glide ------------------------------------------------------------
+//
+// A pluck stretches the spoke a little, raising its tension and pitch while it
+// swings hard; the pitch settles as the vibration dies away. For a string,
+// Δf/f ≈ (3/32)·(EA/T)·(L/L_member)·(πA/L)² (Kirchhoff–Carrier), so the shift
+// is proportional to amplitude squared. Track the peak through the decay in
+// short frames and extrapolate frequency against amplitude² to zero.
+
+export function glideFrames(x, fs, start, { win = 0.12, hop = 0.02 } = {}) {
+  const n = Math.round(win * fs), h = Math.round(hop * fs);
+  const w = new Float64Array(n);
+  let wsum = 0;
+  for (let i = 0; i < n; i++) { w[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * (i + 0.5) / n); wsum += w[i]; }
+  const frames = [];
+  for (let s0 = start; s0 + n <= x.length; s0 += h) {
+    const seg = new Float64Array(n);
+    for (let i = 0; i < n; i++) seg[i] = x[s0 + i] * w[i];
+    frames.push({ t: (s0 - start + n / 2) / fs, seg });
+  }
+  return { frames, fs, n, scale: 2 / wsum };
+}
+
+// Level (dB) of a windowed frame at one frequency: a single DTFT bin.
+function dtftDb(seg, fs, f, scale) {
+  const th = 2 * Math.PI * f / fs;
+  const c = Math.cos(th), sn = Math.sin(th);
+  let re = 0, im = 0, cr = 1, ci = 0;
+  for (let i = 0; i < seg.length; i++) {
+    re += seg[i] * cr; im -= seg[i] * ci;
+    const t = cr * c - ci * sn; ci = cr * sn + ci * c; cr = t;
+  }
+  return 20 * Math.log10(Math.hypot(re, im) * scale + 1e-12);
+}
+
+// Fit f = f0 + c·a² over the frames where the peak near f is clear.
+export function fitGlide(glide, f) {
+  const { frames, fs, n, scale } = glide;
+  // Quarter-bin grid across ±0.9 %: plenty for parabolic interpolation on a Hann lobe.
+  const step = fs / n / 4;
+  const kMax = Math.max(2, Math.ceil(f * 0.009 / step));
+  const pts = [];
+  for (const { t, seg } of frames) {
+    const lv = [];
+    for (let k = -kMax; k <= kMax; k++) lv.push(dtftDb(seg, fs, f + k * step, scale));
+    let k = 0;
+    for (let j = 1; j < lv.length; j++) if (lv[j] > lv[k]) k = j;
+    if (k === 0 || k === lv.length - 1) continue; // no local maximum inside the window
+    const a = lv[k - 1], b = lv[k], c = lv[k + 1];
+    const den = a - 2 * b + c;
+    const p = den ? 0.5 * (a - c) / den : 0;
+    const level = b - 0.25 * (a - c) * p;
+    // Prominence over the nearby spectrum (median of probes 2–5 % away, so a
+    // neighbouring spoke's peak doesn't count as the floor).
+    const probes = [0.95, 0.96, 0.97, 0.98, 1.02, 1.03, 1.04, 1.05].map((m) => dtftDb(seg, fs, f * m, scale)).sort((p, q) => p - q);
+    const floor = (probes[3] + probes[4]) / 2;
+    if (level - floor < 15) continue;
+    pts.push({ t, f: f + (k - kMax + p) * step, level });
+  }
+  if (pts.length < 6) return null;
+  const top = Math.max(...pts.map((q) => q.level));
+  const use = pts.filter((q) => q.level > top - 35);
+  if (use.length < 6) return null;
+  // Weighted least squares; frequency noise variance scales as 1/a².
+  let sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (const q of use) {
+    const a2 = 10 ** ((q.level - top) / 10);
+    const w = a2;
+    sw += w; sx += w * a2; sy += w * q.f; sxx += w * a2 * a2; sxy += w * a2 * q.f;
+  }
+  const det = sw * sxx - sx * sx;
+  const span = 10 ** ((top - Math.min(...use.map((q) => q.level))) / 10);
+  if (det <= 0 || span < 4) return null; // need at least 6 dB of decay to see the trend
+  const slope = (sw * sxy - sx * sy) / det;
+  const f0 = (sy - slope * sx) / sw;
+  let ss = 0;
+  for (const q of use) { const a2 = 10 ** ((q.level - top) / 10); ss += a2 * (q.f - f0 - slope * a2) ** 2; }
+  const rms = Math.sqrt(ss / sw);
+  // Standard error of the slope from the weighted residuals.
+  const seSlope = Math.sqrt((ss / Math.max(1, use.length - 2)) * sw / det);
+  const shift = slope / f0; // fractional pitch rise at the loudest frame
+  // Correct only for a clear, plausible downward glide; otherwise leave the
+  // long-window frequency alone.
+  const ok = slope > 3 * seSlope && shift > 0.0015 && shift < 0.05 && Math.abs(f0 / f - 1) < 0.04 && rms < 0.004 * f;
+  return { f0: ok ? f0 : f, shift: ok ? shift : 0, rms, seShift: seSlope / f0, n: use.length, ok, points: use };
+}
 
 // Analyse one pluck. `x` holds audio starting `preSamples` before the onset.
 // `model` (SpokeModel) turns frequencies into tensions and predicts overtones.
@@ -253,6 +340,41 @@ export function analyzePluck(x, fs, { model = null, preSamples = 0, expectedT = 
   });
   cands.sort((p, q) => q.score - p.score);
 
+  // Correct the leading candidates for pitch glide.
+  if (cands.length && x.length - a > fs * 0.3) {
+    const frames = glideFrames(x, fs, a);
+    for (const c of cands.slice(0, 3)) {
+      const g = fitGlide(frames, c.f);
+      c.fRaw = c.f;
+      c.glide = g && g.ok ? g.shift : null;
+      if (g && g.ok) {
+        c.f = g.f0;
+        if (model) c.T = model.tensionAt(c.f, c.pol ?? 'thin');
+      }
+    }
+  }
+
+  // Overtone cross-check: the 2nd and 3rd partials' ratios to the fundamental
+  // give a second tension estimate that barely depends on how rigidly the
+  // nipple and crossing hold the spoke (they shift every partial alike).
+  if (model && cands.length) {
+    for (const c of cands.slice(0, 3)) {
+      const pol = c.pol ?? 'thin';
+      const f1 = c.fRaw ?? c.f;
+      const ratios = model.ratiosAt(c.T, pol);
+      const est = [];
+      ratios.forEach((r, i) => {
+        const h = allPeaks.filter((q) => Math.abs(q.f / (f1 * r) - 1) < 0.012 && q.prom >= 10).sort((p, q) => q.level - p.level)[0];
+        if (h) est.push({ mode: i + 2, T: model.tensionFromRatio(h.f / f1, i + 1, pol), level: h.level });
+      });
+      if (est.length) {
+        // Prefer the stronger partial; the ratio is most sensitive for higher modes.
+        est.sort((p, q) => q.level - p.level);
+        c.overtone = { T: est[0].T, mode: est[0].mode, all: est };
+      }
+    }
+  }
+
   const best = cands[0] ?? null;
   let confidence = 0;
   if (best) {
@@ -266,6 +388,8 @@ export function analyzePluck(x, fs, { model = null, preSamples = 0, expectedT = 
 // --- Synthetic pluck (tests and the in-app demo) ----------------------------
 
 // Sum of damped partials plus optional interfering modes, click and noise.
+// `glide` on a partial is its fractional pitch rise at the moment of the pluck;
+// it fades with amplitude² as the partial decays.
 export function synthPluck({ fs = 48000, dur = 0.8, partials, extra = [], noise = 0.0015, click = 0.3, pre = 0.15, seed = 7, hum = 0 }) {
   const n = Math.round((dur + pre) * fs);
   const x = new Float32Array(n);
@@ -276,10 +400,11 @@ export function synthPluck({ fs = 48000, dur = 0.8, partials, extra = [], noise 
     x[i] = noise * rand() * 2;
     if (hum) x[i] += hum * (Math.sin(2 * Math.PI * 60 * i / fs) + 0.5 * Math.sin(2 * Math.PI * 180 * i / fs));
   }
-  for (const { f, amp, decay = 3, phase = 0 } of [...partials, ...extra]) {
+  for (const { f, amp, decay = 3, phase = 0, glide = 0 } of [...partials, ...extra]) {
     for (let i = p0; i < n; i++) {
       const t = (i - p0) / fs;
-      x[i] += amp * Math.exp(-decay * t) * Math.sin(2 * Math.PI * f * t + phase);
+      const ph = 2 * Math.PI * f * (t + glide * (1 - Math.exp(-2 * decay * t)) / (2 * decay));
+      x[i] += amp * Math.exp(-decay * t) * Math.sin(ph + phase);
     }
   }
   // Finger click: a few ms of broadband noise.

@@ -1,5 +1,4 @@
 <title>Spoke Pitch-o-meter</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <meta name="description" content="Measure bicycle spoke tension from the sound of a plucked spoke.">
 <!--PWA_HEAD-->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -323,6 +322,7 @@ tr[data-hole] { cursor: pointer; }
         <span><b class="data" id="freqOut">— Hz</b> <span id="noteOut"></span></span>
         <span id="altUnits"></span>
         <span id="absErr"></span>
+        <span id="ovtOut"></span>
       </div>
     </div>
 
@@ -332,7 +332,7 @@ tr[data-hole] { cursor: pointer; }
     </div>
     <div class="meter" aria-hidden="true"><i id="meter"></i></div>
 
-    <div class="status"><p id="statusText">Tap Listen, then pluck a spoke near its middle.</p></div>
+    <div class="status"><p id="statusText">Tap Listen, then pluck a spoke lightly about 5 cm from the nipple.</p></div>
     <div class="cands" id="cands" aria-label="Other peaks in this pluck"></div>
 
     <button type="button" class="btn primary big" id="listenBtn">Listen</button>

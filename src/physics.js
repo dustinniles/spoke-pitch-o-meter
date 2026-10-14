@@ -283,7 +283,8 @@ export function buildSpokeModel({ spoke, lengthMm, farEnd = 'cross', nearEnd = '
 }
 
 // Monotone interpolation in log–log space (f ∝ √T to first order).
-function interpLogLog(xs, ys, x) {
+// `lx`/`ly` are the natural logs of xs/ys, precomputed by the caller.
+function interpLogLog(xs, ys, x, lx = xs.map(Math.log), ly = ys.map(Math.log)) {
   if (x <= xs[0]) {
     const s = Math.log(ys[1] / ys[0]) / Math.log(xs[1] / xs[0]);
     return ys[0] * Math.pow(x / xs[0], s);
@@ -296,7 +297,6 @@ function interpLogLog(xs, ys, x) {
   let lo = 0, hi = last;
   while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (xs[mid] <= x) lo = mid; else hi = mid; }
   // Cubic Hermite in log space using finite-difference slopes.
-  const lx = xs.map(Math.log), ly = ys.map(Math.log);
   const slope = (i) => {
     if (i <= 0) return (ly[1] - ly[0]) / (lx[1] - lx[0]);
     if (i >= last) return (ly[last] - ly[last - 1]) / (lx[last] - lx[last - 1]);
@@ -313,16 +313,39 @@ export class SpokeModel {
   constructor({ L, tables, muMean, spoke, lengthMm, farEnd, nearEnd }) {
     Object.assign(this, { L, tables, muMean, spoke, lengthMm, farEnd, nearEnd });
     this.polarizations = Object.keys(tables);
+    // Column arrays and their logs, built once for fast interpolation.
+    this.cols = {};
+    for (const [pol, rows] of Object.entries(tables)) {
+      const T = rows.map((r) => r.T);
+      const f = rows[0].f.map((_, m) => rows.map((r) => r.f[m]));
+      this.cols[pol] = { T, lT: T.map(Math.log), f, lf: f.map((col) => col.map(Math.log)) };
+    }
   }
   // Fundamental (mode index 0) or overtone frequency at tension T (N).
   freqAt(T, pol = 'thin', mode = 0) {
-    const rows = this.tables[pol];
-    return interpLogLog(rows.map((r) => r.T), rows.map((r) => r.f[mode]), T);
+    const c = this.cols[pol];
+    return interpLogLog(c.T, c.f[mode], T, c.lT, c.lf[mode]);
   }
   // Tension (N) that makes the given mode ring at f (Hz).
   tensionAt(f, pol = 'thin', mode = 0) {
-    const rows = this.tables[pol];
-    return interpLogLog(rows.map((r) => r.f[mode]), rows.map((r) => r.T), f);
+    const c = this.cols[pol];
+    return interpLogLog(c.f[mode], c.T, f, c.lf[mode], c.lT);
+  }
+  // Tension (N) at which overtone `mode` sits at `ratio` × the fundamental.
+  // The ratio falls as tension rises (bending matters less), and it barely
+  // depends on how rigidly the ends are held, so it is an independent check.
+  tensionFromRatio(ratio, mode = 2, pol = 'thin') {
+    const c = this.cols[pol];
+    const r = c.T.map((_, i) => c.f[mode][i] / c.f[0][i]);
+    // r decreases with T: walk the table and interpolate ln T linearly in r.
+    if (ratio >= r[0]) return c.T[0];
+    for (let i = 1; i < r.length; i++) {
+      if (ratio >= r[i]) {
+        const u = (ratio - r[i - 1]) / (r[i] - r[i - 1]);
+        return Math.exp(c.lT[i - 1] + u * (c.lT[i] - c.lT[i - 1]));
+      }
+    }
+    return c.T[c.T.length - 1];
   }
   // Overtone ratios f_n / f_1 at tension T (inharmonicity fingerprint).
   ratiosAt(T, pol = 'thin') {

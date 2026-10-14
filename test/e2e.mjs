@@ -72,7 +72,7 @@ try {
   await page.click('#listenBtn');
   results.wheel = await page.evaluate(() => {
     const w = JSON.parse(localStorage.getItem('pitchometer:wheels'))[0];
-    return Object.entries(w.readings).map(([h, r]) => `spoke ${h}: ${(r.T / 9.80665).toFixed(1)} kgf from ${r.plucks.map((p) => (p.T / 9.80665).toFixed(1)).join(', ')}`);
+    return Object.entries(w.readings).map(([h, r]) => `spoke ${h}: ${(r.T / 9.80665).toFixed(1)} kgf from ${r.plucks.map((p) => (p.T / 9.80665).toFixed(1) + (p.glide ? ' [glide ' + (p.glide * 100).toFixed(2) + '%]' : '') + ' f=' + p.f.toFixed(2) + ' raw=' + (p.fRaw ?? 0).toFixed(2)).join(', ')}`);
   });
   for (const v of ['wheel', 'setup', 'about']) {
     await page.click(`.tabbar button[data-view="${v}"]`);

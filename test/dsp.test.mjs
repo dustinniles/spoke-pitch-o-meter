@@ -106,3 +106,34 @@ test('a strong second partial is not mistaken for the fundamental', () => {
   const r = analyzePluck(x, fs, { model, preSamples: Math.round(0.15 * fs) });
   assert.ok(Math.abs(r.best.T / G - 100) < 0.5, `got ${(r.best.T / G).toFixed(1)}`);
 });
+
+function gliding(tKgf, glide, { decay = 3, extra = [], seed = 11 } = {}) {
+  const T = tKgf * G, f1 = model.freqAt(T), r = model.ratiosAt(T);
+  const pre = 0.15;
+  const { x } = synthPluck({
+    fs, dur: 0.9, pre, seed, noise: 0.0015,
+    partials: [{ f: f1, amp: 0.25, decay, glide }, { f: f1 * r[0], amp: 0.08, decay: decay * 1.6, glide: glide * 4 }, { f: f1 * r[1], amp: 0.04, decay: decay * 2.3 }],
+    extra: extra.map((e) => ({ ...e, f: e.ratio * f1 })),
+  });
+  return analyzePluck(x, fs, { model, preSamples: Math.round(pre * fs) });
+}
+
+test('a hard pluck’s pitch glide is removed by extrapolating to zero amplitude', () => {
+  for (const [glide, decay] of [[0.008, 3], [0.015, 3], [0.015, 1.8], [0.025, 4]]) {
+    const r = gliding(110, glide, { decay });
+    const raw = model.tensionAt(r.best.fRaw) / G;
+    const got = r.best.T / G;
+    assert.ok(raw > 110 * 1.003, `uncorrected reading should be high (${raw.toFixed(1)})`);
+    assert.ok(Math.abs(got - 110) < 0.5, `glide ${glide}, decay ${decay}: corrected ${got.toFixed(2)} (raw ${raw.toFixed(1)})`);
+  }
+});
+
+test('a gentle pluck is left alone', () => {
+  const r = gliding(110, 0);
+  assert.ok(Math.abs(r.best.T / G - 110) < 0.25, `got ${(r.best.T / G).toFixed(2)}`);
+});
+
+test('glide correction survives a weaker crossing-spoke mode 4 % below', () => {
+  const r = gliding(113, 0.015, { extra: [{ ratio: Math.sqrt(104 / 113), amp: 0.1, decay: 3 }] });
+  assert.ok(Math.abs(r.best.T / G - 113) < 0.8, `got ${(r.best.T / G).toFixed(2)}`);
+});

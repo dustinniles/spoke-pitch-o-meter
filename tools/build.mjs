@@ -1,6 +1,5 @@
-// Inline the modules into one HTML page.
-//   dist/spoke-pitch-o-meter.html  — single file for the claude.ai link (no PWA tags)
-//   dist/site/             — self-hostable copy with manifest, service worker, icons
+// Inline the modules into one HTML page and write the deployable site to
+// dist/site/ (page, manifest, service worker, icons).
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,9 +32,6 @@ const pwaHead = [
 const fill = (head) => template.replace('<!--PWA_HEAD-->', head).replace('/*APP_SCRIPT*/', () => script);
 
 mkdirSync(join(root, 'dist', 'site'), { recursive: true });
-// Artifact page: the publisher supplies the document skeleton.
-writeFileSync(join(root, 'dist', 'spoke-pitch-o-meter.html'), fill(''));
-// Self-hosted page: a full document.
 const full = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>\n</head>\n<body>\n${fill(pwaHead)}\n</body>\n</html>\n`;
 writeFileSync(join(root, 'dist', 'site', 'index.html'), full);
 

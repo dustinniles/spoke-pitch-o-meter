@@ -237,7 +237,7 @@ async function startListening() {
   try { audio.wake = await navigator.wakeLock?.request('screen'); } catch { /* optional */ }
   state.listening = true;
   renderListen();
-  setStatus('Listening. Pluck the spoke near its middle; rest a finger on the spoke it crosses.');
+  setStatus('Listening. Pluck lightly about 5 cm from the nipple; rest a finger on the spoke it crosses.');
   liveLoop();
 }
 
@@ -274,7 +274,7 @@ function onAudio(block) {
   audio.written += block.length;
   const fs = audio.ctx.sampleRate;
   for (const o of onsets) audio.pending.push(o);
-  const need = Math.round((ANALYSIS.lateStart + ANALYSIS.lateWindow + 0.02) * fs);
+  const need = Math.round((ANALYSIS.tail + 0.02) * fs);
   const pre = Math.round(ANALYSIS.pre * fs);
   while (audio.pending.length && audio.written >= audio.pending[0] + need) {
     const onset = audio.pending.shift();
@@ -317,6 +317,11 @@ function processPluck(x, fs, preSamples, isDemo) {
   if (state.mode === 'wheel' && !isDemo) recordPluck(res.candidates[0], res.confidence);
   else if (isDemo) setStatus('Demo pluck, synthesised with crossing-spoke interference. Not recorded.');
   else setStatus(res.confidence >= 0.4 ? 'Got it. Pluck again to check repeatability.' : 'Unsure which peak is the spoke. Damp the crossing spoke and pluck again, or tap the right peak.', res.confidence >= 0.4 ? null : 'warn');
+  // A firm pluck rings sharp; the reading is corrected, but say so.
+  const g = res.best.glide;
+  if (!isDemo && g != null && g > 0.008) {
+    setStatus(`That pluck was firm enough to raise the pitch ${(g * 100).toFixed(1)}% at first; the reading is corrected for it. Lighter plucks give steadier results.`, g > 0.02 ? 'warn' : null);
+  }
 }
 
 function chosenCand() { return state.last?.candidates[state.chosen] ?? null; }
@@ -331,7 +336,7 @@ function recordPluck(c, confidence, manual = false) {
   const h = w.current;
   const k = state.last.k;
   const r = w.readings[h] ?? { plucks: [] };
-  const p = { T: c.T * k, f: c.f };
+  const p = { T: c.T * k, f: c.f, fRaw: c.fRaw ?? c.f, To: c.overtone?.T ?? null, glide: c.glide ?? null };
   if (manual && r.plucks.length) r.plucks[r.plucks.length - 1] = p; else r.plucks.push(p);
   r.plucks = r.plucks.slice(-5);
   const need = +state.settings.plucksNeeded;
@@ -386,6 +391,15 @@ function renderReading() {
   const relM = spoke.mid.t ? 0.03 : 0.02;
   const rel = Math.sqrt(relL ** 2 + relM ** 2 + 0.04 ** 2);
   $('absErr').textContent = `±${fmtT(T * rel)} ${state.unit} absolute (est.)`;
+  // Independent estimate from the overtones; a persistent gap points at the
+  // free length or at how rigidly the nipple and crossing hold the spoke.
+  const ov = c.overtone;
+  const ovEl = $('ovtOut');
+  if (ov && !r.demo) {
+    const gap = ov.T / c.T - 1;
+    ovEl.textContent = `Overtone check ${fmtT(ov.T)} ${state.unit} (${gap >= 0 ? '+' : '−'}${Math.abs(gap * 100).toFixed(0)}%)`;
+    ovEl.style.color = Math.abs(gap) > 0.08 ? 'var(--warn)' : '';
+  } else { ovEl.textContent = ''; ovEl.style.color = ''; }
   const chip = $('confChip');
   const conf = state.chosen === 0 ? r.confidence : 1;
   const manual = state.chosen !== 0;
@@ -564,7 +578,7 @@ async function analyseFile(file) {
     let onsets = [];
     for (let i = 0; i < x.length; i += 1024) onsets.push(...det.push(x.subarray(i, i + 1024)));
     const pre = Math.round(ANALYSIS.pre * fs);
-    const need = Math.round((ANALYSIS.lateStart + ANALYSIS.lateWindow + 0.02) * fs);
+    const need = Math.round((ANALYSIS.tail + 0.02) * fs);
     if (!onsets.length) {
       // No clear onset: treat the loudest moment as the pluck.
       let best = 0, be = 0;
@@ -783,12 +797,15 @@ $('spokeTable').addEventListener('click', (e) => { const h = e.target.closest('t
 
 function csv() {
   const w = state.wheel;
-  const rows = [['spoke', 'side', 'tension_kgf', 'tension_N', 'frequency_Hz', 'plucks', 'spoke_type', 'free_length_mm']];
+  const rows = [['spoke', 'side', 'tension_kgf', 'tension_N', 'frequency_Hz', 'plucks', 'overtone_check_kgf', 'pitch_glide_pct', 'spoke_type', 'free_length_mm']];
   for (const h of orderList(w)) {
     const r = w.readings[h];
     const sk = holeSide(w, h);
     const side = w.sides[sk];
-    rows.push([h, sk, r ? (r.T / G).toFixed(1) : '', r ? r.T.toFixed(0) : '', r?.f ? r.f.toFixed(1) : '', r ? r.plucks.map((p) => (p.T / G).toFixed(1)).join(' ') : '', spokeLabel(spokeById(side.spokeId)), side.lengthMm]);
+    const ov = r ? r.plucks.map((p) => p.To).filter((v) => v) : [];
+    const gl = r ? r.plucks.map((p) => p.glide).filter((v) => v != null) : [];
+    rows.push([h, sk, r ? (r.T / G).toFixed(1) : '', r ? r.T.toFixed(0) : '', r?.f ? r.f.toFixed(2) : '', r ? r.plucks.map((p) => (p.T / G).toFixed(1)).join(' ') : '',
+      ov.length ? (median(ov) / G).toFixed(1) : '', gl.length ? (median(gl) * 100).toFixed(2) : '', spokeLabel(spokeById(side.spokeId)), side.lengthMm]);
   }
   return rows.map((r) => r.map((v) => /[",\s]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(',')).join('\n');
 }
@@ -1044,6 +1061,8 @@ function renderAbout() {
     <ul>
       <li><b>It treats the spoke as a stiff beam, not a string.</b> A spoke resists bending, which raises its pitch, most of all at low tension and near the nipple, where it's held rigidly. The classic formula <span class="data">T = 4·μ·L²·f²</span> ignores this and reads high. The Pitch-o-meter solves the tensioned-beam equation along the actual spoke, butted ends and bladed sections included.</li>
       <li><b>It identifies the right peak.</b> A plucked spoke in a wheel also excites the spoke it crosses and the pair as a whole. Each candidate is checked for its overtone fingerprint (a stiff spoke's overtones sit slightly sharp of whole multiples), how long it rings, and how far it stands above the room noise. When two peaks are close calls, it says so, and you can tap the right one.</li>
+      <li><b>It corrects for how hard you pluck.</b> A firm pluck stretches the spoke and raises its pitch until the ring dies down; a 2 mm pluck can read 5% high. The app follows the pitch as the ring decays and works back to what it would be at zero amplitude.</li>
+      <li><b>It cross-checks with the overtones.</b> A stiff spoke's overtones sit slightly sharp of whole multiples, by an amount that depends on tension but hardly at all on how the ends are held. That gives a second, independent estimate, shown under each reading as the overtone check. A steady gap between the two points to the free length or to the end conditions.</li>
       <li><b>It reports uncertainty.</b> Every reading shows an estimated absolute error and, while mapping a wheel, waits for plucks that agree.</li>
     </ul>
     <h3>Checked against a load cell</h3>
@@ -1057,7 +1076,7 @@ function renderAbout() {
     <ul>
       <li>Measure the free length carefully. Tension goes with length squared, so a 2 mm error on a 200 mm segment is about 2% in tension. The geometry calculator in Setup gives the length if you know the ERD and hub dimensions.</li>
       <li>Rest a fingertip on the spoke it crosses, near the cross. This damps the partner spoke and makes the crossing behave like a fixed point.</li>
-      <li>Pluck sideways near the middle of the free length, with a fingernail or a plastic pick. For bladed spokes, pluck across the flat face.</li>
+      <li>Pluck sideways and lightly, about a quarter of the way along the free length from the nipple (roughly 5 cm), with a fingernail or a plastic pick. Light plucks need less correction, and plucking there rings both overtones the cross-check uses; plucking dead centre or a third of the way along silences one of them. For bladed spokes, pluck across the flat face.</li>
       <li>Hold the phone 10–20 cm away, bottom edge (the microphone) toward the spoke, in a quiet room.</li>
     </ul>
     <h3>How accurate is it?</h3>
@@ -1112,7 +1131,7 @@ renderListen();
 show('gauge');
 // Open on a worked example so the gauge shows what a reading looks like.
 demoPluck();
-setStatus('Tap Listen, then pluck a spoke near its middle. The reading above is a synthesised example.');
+setStatus('Tap Listen, then pluck a spoke lightly about 5 cm from the nipple. The reading above is a synthesised example.');
 if ('serviceWorker' in navigator && !inFrame && location.protocol === 'https:' && document.querySelector('link[rel="manifest"]')) {
   navigator.serviceWorker.register('sw.js').catch(() => { /* offline support is optional */ });
 }
