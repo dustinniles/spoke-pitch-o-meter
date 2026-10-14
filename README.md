@@ -4,7 +4,7 @@ Measure bicycle spoke tension from the sound of a plucked spoke. A web-app succe
 
 ## Put it on your iPhone
 
-Open **<https://dustinniles.github.io/spoke-pitch-o-meter/>** in Safari → Share → **Add to Home Screen**. It launches full-screen and works offline after the first visit. The first time you tap **Listen**, Safari asks for the microphone; allow it.
+Open **<https://dustinniles.com/spoke-pitch-o-meter/>** in Safari → Share → **Add to Home Screen**. It launches full-screen and works offline after the first visit. The first time you tap **Listen**, Safari asks for the microphone; allow it.
 
 Every push to `main` runs the unit tests, rebuilds, and redeploys the site through GitHub Actions (`.github/workflows/pages.yml`).
 
