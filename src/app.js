@@ -455,7 +455,7 @@ function drawScope(live) {
     g.fillStyle = band; g.fillRect(a, top, b - a, bottom - top);
   }
   // Frequency grid.
-  g.font = '10px ' + cssVar('--font-data');
+  g.font = '11px ' + cssVar('--font-data');
   g.fillStyle = muted; g.strokeStyle = rule; g.lineWidth = 1;
   for (const f of [100, 200, 300, 500, 700, 1000, 1500, 2000, 3000, 5000]) {
     if (f < fLo || f > fHi) continue;
@@ -473,10 +473,10 @@ function drawScope(live) {
       const TN = t / unitF;
       if (TN / G > 220) break;
       const x = xOf(model.freqAt(TN));
-      if (x < 34 || x > W - 14) continue;
+      if (x < 36 || x > W - 16) continue;
       g.fillStyle = muted; g.fillRect(Math.round(x), top - 4, 1, 4);
       // Labels thin out where the scale bunches up at high tension.
-      if (x - lastX >= 26) { g.fillText(String(t), x, top - 7); lastX = x; }
+      if (x - lastX >= 30) { g.fillText(String(t), x, top - 7); lastX = x; }
     }
     g.textAlign = 'left'; g.fillText(state.unit, 4, top - 7);
   }
@@ -642,6 +642,9 @@ function renderSpokeBar() {
 
 function renderMode() {
   document.querySelectorAll('#modeSeg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode)));
+  // In wheel mode the side follows the spoke being measured.
+  $('sideSeg').hidden = state.mode === 'wheel';
+  document.querySelectorAll('#sideSeg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.side === state.gaugeSide)));
   renderSpokeBar();
   renderContext();
 }
@@ -683,18 +686,18 @@ function renderWheel() {
   for (let t = ringStepK; t <= tMaxK; t += ringStepK) {
     const rr = rOf(t * G);
     s += `<circle cx="${cx}" cy="${cy}" r="${rr.toFixed(1)}" fill="none" stroke="var(--rule)" stroke-width="1"/>`;
-    s += `<text x="${cx + 3}" y="${(cy - rr + 11).toFixed(1)}" font-size="9" fill="var(--muted)" font-family="var(--font-data)">${Math.round(t * G * unitF)}</text>`;
+    s += `<text x="${cx + 4}" y="${(cy - rr + 14).toFixed(1)}" font-size="13" fill="var(--muted)" font-family="var(--font-data)">${Math.round(t * G * unitF)}</text>`;
   }
   s += `<circle cx="${cx}" cy="${cy}" r="${rRim}" fill="none" stroke="var(--ink)" stroke-width="3"/>`;
   s += `<circle cx="${cx}" cy="${cy}" r="${rHub}" fill="var(--panel)" stroke="var(--ink)" stroke-width="1.5"/>`;
   // Valve hole at the top.
   s += `<rect x="${cx - 4}" y="${cy - rRim - 9}" width="8" height="12" rx="2" fill="var(--ink)"/>`;
-  s += `<text x="${cx + 9}" y="${cy - rRim - 0}" font-size="10" fill="var(--muted)">valve</text>`;
+  s += `<text x="${cx - 7}" y="${cy - rRim + 17}" font-size="13" text-anchor="end" fill="var(--muted)">valve</text>`;
   // Side means.
   for (const sk of ['R', 'L']) {
     const st = stats[sk];
     if (!st.n) continue;
-    s += `<circle cx="${cx}" cy="${cy}" r="${rOf(st.mean).toFixed(1)}" fill="none" stroke="var(--${sk === 'R' ? 'accent' : 'left'})" stroke-width="1.2" stroke-dasharray="4 4" opacity="0.8"/>`;
+    s += `<circle cx="${cx}" cy="${cy}" r="${rOf(st.mean).toFixed(1)}" fill="none" stroke="var(--${sk === 'R' ? 'accent' : 'left'})" stroke-width="1.4" stroke-dasharray="1.5 4" stroke-linecap="round"/>`;
   }
   // Spokes and readings.
   for (let h = 1; h <= w.count; h++) {
@@ -702,13 +705,14 @@ function renderWheel() {
     const [x1, y1] = P(h, rHub), [x2, y2] = P(h, rRim - 2);
     s += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="var(--rule)" stroke-width="1"/>`;
     const [lx, ly] = P(h, rRim + 12);
-    s += `<text x="${lx.toFixed(1)}" y="${(ly + 3).toFixed(1)}" font-size="8.5" text-anchor="middle" fill="var(--muted)" font-family="var(--font-data)">${h}</text>`;
+    s += `<text x="${lx.toFixed(1)}" y="${(ly + 4.5).toFixed(1)}" font-size="13" text-anchor="middle" fill="var(--muted)" font-family="var(--font-data)">${h}</text>`;
   }
   for (const sk of ['R', 'L']) {
     const pts = [];
     for (let h = 1; h <= w.count; h++) if (holeSide(w, h) === sk && w.readings[h]) pts.push(P(h, rOf(w.readings[h].T)));
-    if (pts.length > 2) s += `<polygon points="${pts.map((p) => p.map((v) => v.toFixed(1)).join(',')).join(' ')}" fill="none" stroke="var(--${sk === 'R' ? 'accent' : 'left'})" stroke-width="1.8" stroke-linejoin="round"/>`;
+    if (pts.length > 2) s += `<polygon points="${pts.map((p) => p.map((v) => v.toFixed(1)).join(',')).join(' ')}" fill="none" stroke="var(--${sk === 'R' ? 'accent' : 'left'})" stroke-width="1.8" stroke-linejoin="round"${sk === 'L' ? ' stroke-dasharray="6 4"' : ''}/>`;
   }
+  const hits = [];
   for (let h = 1; h <= w.count; h++) {
     const r = w.readings[h];
     const sk = holeSide(w, h);
@@ -716,11 +720,19 @@ function renderWheel() {
     if (cur) { const [x, y] = P(h, rRim - 2); s += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="5" fill="var(--ink)"/>`; }
     if (!r) continue;
     const dev = r.T / stats[sk].mean - 1;
+    const cls = devClass(dev);
     const [x, y] = P(h, rOf(r.T));
-    s += `<circle data-hole="${h}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${cur ? 6.5 : 5}" fill="var(--${devClass(dev)})" stroke="var(--panel)" stroke-width="1.5" style="cursor:pointer"><title>Spoke ${h}: ${fmtT(r.T)} ${state.unit} (${(dev * 100).toFixed(0)}%)</title></circle>`;
+    // Deviation is carried by size and outline too, not colour alone.
+    const rad = cls === 'good' ? 4.5 : cls === 'warn' ? 6.5 : 8;
+    const edge = cls === 'bad' ? 'stroke="var(--ink)" stroke-width="2"' : 'stroke="var(--panel)" stroke-width="1.5"';
+    s += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rad}" fill="var(--${cls})" ${edge}/>`;
+    if (cur) s += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rad + 4}" fill="none" stroke="var(--ink)" stroke-width="1.5"/>`;
+    hits.push(`<circle data-hole="${h}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="16" fill="rgba(0,0,0,0)" style="cursor:pointer"><title>Spoke ${h}: ${fmtT(r.T)} ${state.unit} (${(dev * 100).toFixed(0)}%)</title></circle>`);
   }
+  // Generous invisible tap areas on top of the dots.
+  s += hits.join('');
   fig.innerHTML = s;
-  $('wheelLegend').innerHTML = `<span class="side-dot R"></span>Right side &nbsp; <span class="side-dot L"></span>Left side &nbsp; Dashed rings are side averages. Dot colour is the deviation from the side average: green within 10%, amber within 20%, red beyond. Rings are labelled in ${state.unit}.`;
+  $('wheelLegend').innerHTML = `<span class="side-dot R"></span>Right side, solid line. <span class="side-dot L"></span>Left side, dashed line. Dotted rings mark each side's average; rings are labelled in ${state.unit}. Dots show each spoke's distance from its side's average: small and green within 10%, larger and amber within 20%, largest, red and outlined beyond that. Tap a dot or a table row to re-measure that spoke.`;
 
   // Stats.
   const sb = $('stats');
@@ -822,8 +834,7 @@ function renderSaved() {
   for (const w of list) {
     const n = Object.keys(w.readings).length;
     const row = document.createElement('div');
-    row.className = 'sidehead';
-    row.style.padding = '6px 0';
+    row.className = 'sidehead saved-row';
     row.innerHTML = `<div><b>${escapeHtml(w.name || 'Untitled wheel')}</b>${w.id === state.wheel.id ? ' <span class="chip good">open</span>' : ''}<div class="muted">${new Date(w.created).toLocaleDateString()} · ${w.count} spokes · ${n} measured</div></div>`;
     const btns = document.createElement('div');
     btns.className = 'row'; btns.style.flexWrap = 'nowrap';
@@ -832,7 +843,7 @@ function renderSaved() {
       open.addEventListener('click', () => { state.wheel = w; saveAll(); renderWheel(); renderMode(); });
       btns.appendChild(open);
     }
-    const del = document.createElement('button'); del.className = 'btn'; del.type = 'button'; del.textContent = 'Delete';
+    const del = document.createElement('button'); del.className = 'btn destructive'; del.type = 'button'; del.textContent = 'Delete';
     del.addEventListener('click', () => {
       if (del.dataset.armed) {
         state.wheels = state.wheels.filter((x) => x.id !== w.id);
@@ -868,9 +879,9 @@ function renderSidePanel(sk) {
       <div class="field full"><label for="${p}spoke">Spoke</label><select id="${p}spoke">${spokeOptions(side.spokeId)}</select>
         <span class="help" id="${p}note"></span></div>
       <div class="field"><label for="${p}len">Free length (mm)</label><input id="${p}len" type="number" inputmode="decimal" min="40" max="400" step="0.5" value="${side.lengthMm}"></div>
-      <div class="field"><label for="${p}far">Far end of that length</label>
-        <select id="${p}far"><option value="cross" ${side.farEnd === 'cross' ? 'selected' : ''}>Touches a crossing spoke</option><option value="hub" ${side.farEnd === 'hub' ? 'selected' : ''}>Runs to the hub flange</option></select></div>
-      <div class="field full help">Measure from where the spoke leaves the nipple to the middle of the crossing where it touches another spoke. For radial spokes, or crossings that don't touch, measure to the hub flange instead.</div>
+      <div class="field"><label for="${p}far">Measured to</label>
+        <select id="${p}far"><option value="cross" ${side.farEnd === 'cross' ? 'selected' : ''}>The cross</option><option value="hub" ${side.farEnd === 'hub' ? 'selected' : ''}>The hub</option></select></div>
+      <div class="field full help">Measure from where the spoke leaves the nipple to the middle of the crossing where it touches another spoke. For radial spokes, or crossings that don't touch, measure to the hub flange and choose “The hub”.</div>
       <div class="field"><label for="${p}tgt">Target (kgf, optional)</label><input id="${p}tgt" type="number" inputmode="decimal" min="10" max="250" step="1" value="${side.targetKgf ?? ''}"></div>
       <div class="field full"><div class="calc-out" id="${p}pitch">—</div></div>
     </div>
@@ -998,7 +1009,7 @@ function renderCalib() {
       const line = document.createElement('div');
       line.className = 'sidehead';
       line.innerHTML = `<span class="data">${(r.app / G).toFixed(1)} → ${(r.ref / G).toFixed(1)} kgf (×${(r.ref / r.app).toFixed(3)})</span>`;
-      const del = document.createElement('button'); del.type = 'button'; del.className = 'btn'; del.textContent = 'Remove';
+      const del = document.createElement('button'); del.type = 'button'; del.className = 'btn destructive'; del.textContent = 'Remove';
       del.addEventListener('click', () => { state.calib.splice(r.i, 1); saveAll(); renderCalib(); renderContext(); });
       line.appendChild(del);
       box.appendChild(line);
@@ -1073,14 +1084,11 @@ document.querySelectorAll('#modeSeg button').forEach((b) => b.addEventListener('
   if (state.mode === 'wheel' && state.wheel.example) toast('Showing the example wheel. Start a real one from the Wheel tab.');
   saveAll(); renderMode(); drawScope(false);
 }));
-$('contextChip').addEventListener('click', () => {
-  if (state.mode === 'single') {
-    // In single-spoke mode the chip flips between the two sides' spoke setups.
-    state.gaugeSide = state.gaugeSide === 'R' ? 'L' : 'R';
-    renderContext(); drawScope(false);
-    toast(`Using ${sideName(state.wheel, state.gaugeSide).toLowerCase()} spoke settings`);
-  } else show('setup');
-});
+$('contextChip').addEventListener('click', () => show('setup'));
+document.querySelectorAll('#sideSeg button').forEach((b) => b.addEventListener('click', () => {
+  state.gaugeSide = b.dataset.side;
+  renderMode(); drawScope(false);
+}));
 $('prevSpoke').addEventListener('click', () => advance(-1));
 $('nextSpoke').addEventListener('click', () => advance(1));
 $('listenBtn').addEventListener('click', () => (state.listening ? stopListening() : startListening()));

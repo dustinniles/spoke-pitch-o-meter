@@ -16,13 +16,22 @@
   --accent: #1d4ed8;      /* anodised cobalt: right side, primary actions */
   --accent-ink: #ffffff;
   --left: #a1338f;        /* anodised violet: left side */
-  --good: #18804a;
-  --warn: #b26b00;
+  --good: #15753f;
+  --warn: #935800;
   --bad: #c4302b;
   --band: rgba(29, 78, 216, 0.07);
   --font-display: "Archivo", "SF Pro Display", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-body: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-data: "Azeret Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* Apple text styles, in rem so they follow the reader's Dynamic Type size (1rem = Body, 17 pt at the default size). */
+  --t-title2: 1.294rem;
+  --t-title3: 1.176rem;
+  --t-body: 1rem;
+  --t-subhead: 0.882rem;
+  --t-footnote: max(12px, 0.765rem);
+  --t-caption1: max(12px, 0.706rem);
+  --t-caption2: max(11px, 0.647rem);
+  --tap: 44px;            /* minimum hit target */
   --radius: 10px;
   --tabbar-h: 58px;
 }
@@ -40,12 +49,26 @@
   --good: #4cc386; --warn: #f0b44c; --bad: #f2695e; --band: rgba(125, 155, 255, 0.09);
   color-scheme: dark;
 }
+/* Settings → Accessibility → Increase Contrast. */
+@media (prefers-contrast: more) {
+  :root { --muted: #434f59; --rule: #8b97a1; }
+  :root[data-theme="dark"] { --muted: #a9b6c1; --rule: #5d6c78; }
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --muted: #a9b6c1; --rule: #5d6c78; }
+}
 
+/* 17 px body everywhere; on iPhone and iPad, the reader's Dynamic Type size instead. */
+html { font-size: 106.25%; }
+@supports (font: -apple-system-body) and (-webkit-touch-callout: none) {
+  html { font: -apple-system-body; }
+}
 html, body { height: 100%; }
 body {
   background: var(--bg); color: var(--ink);
-  font-family: var(--font-body); font-size: 15px; line-height: 1.45;
+  font-family: var(--font-body); font-size: var(--t-body); line-height: 1.4;
   -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
 }
 * { box-sizing: border-box; }
 button, input, select { font: inherit; color: inherit; }
@@ -61,40 +84,50 @@ button, input, select { font: inherit; color: inherit; }
 .view { display: flex; flex-direction: column; gap: 14px; }
 
 h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
-h2 { font-size: 20px; font-stretch: 85%; font-weight: 700; letter-spacing: 0.01em; }
-h3 { font-size: 15px; font-weight: 650; }
+h2 { font-size: var(--t-title3); font-stretch: 85%; font-weight: 700; letter-spacing: 0.01em; }
+h3 { font-size: var(--t-body); font-weight: 650; }
 p { margin: 0; }
 .muted { color: var(--muted); }
-.small { font-size: 13px; }
+.small { font-size: var(--t-footnote); }
 .label {
-  font-size: 11px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted);
+  font-size: var(--t-caption2); font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted);
 }
 .data { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 
 /* Top bar */
-.topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
 .brand { display: flex; align-items: flex-end; gap: 8px; }
-.brand h1 { font-size: 22px; line-height: 1; font-stretch: 70%; font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase; }
-.brand h1 .eyebrow { display: block; font-size: 11px; font-stretch: 100%; font-weight: 600; letter-spacing: 0.24em; color: var(--muted); margin-bottom: 3px; }
-.brand .ver { font-family: var(--font-data); font-size: 11px; color: var(--muted); }
+.brand h1 { font-size: var(--t-title2); line-height: 1; font-stretch: 70%; font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase; }
+.brand h1 .eyebrow { display: block; font-size: var(--t-caption2); font-stretch: 100%; font-weight: 600; letter-spacing: 0.24em; color: var(--muted); margin-bottom: 3px; }
+.brand .ver { font-family: var(--font-data); font-size: var(--t-caption2); color: var(--muted); }
 
-.seg { display: inline-flex; background: var(--panel); border: 1px solid var(--rule); border-radius: 999px; padding: 3px; gap: 2px; }
-.seg button {
-  border: 0; background: transparent; padding: 6px 12px; border-radius: 999px; cursor: pointer;
-  font-size: 13px; font-weight: 600; color: var(--muted);
+/* Segmented controls: equal-width segments, each with a full 44 pt hit area. */
+.seg {
+  display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 999px; padding: 3px; gap: 2px;
 }
+.seg button {
+  position: relative; min-height: 36px; min-width: var(--tap);
+  border: 0; background: transparent; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  font-size: var(--t-subhead); font-weight: 600; color: var(--muted); white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+.seg button::after { content: ""; position: absolute; inset: -4px -1px; }
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.modes { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
 
-/* Spoke context chip */
+/* Spoke context: opens Setup, so it carries a disclosure chevron. */
 .context {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius);
-  padding: 10px 12px; cursor: pointer; text-align: left; width: 100%;
+  padding: 10px 12px; min-height: var(--tap); cursor: pointer; text-align: left; width: 100%;
 }
 .context .what { min-width: 0; }
 .context .what strong { display: block; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.context .what span { font-size: 13px; color: var(--muted); }
-.side-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; vertical-align: 1px; margin-right: 6px; }
+.context .what span { font-size: var(--t-footnote); color: var(--muted); }
+.chev { flex: 0 0 auto; width: 8px; height: 14px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.side-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; vertical-align: 1px; margin-right: 6px; flex: 0 0 auto; }
+.seg .side-dot { margin-right: 0; }
 .side-dot.R { background: var(--accent); }
 .side-dot.L { background: var(--left); }
 
@@ -106,41 +139,39 @@ p { margin: 0; }
   font-variant-numeric: tabular-nums;
 }
 .readout .big.stale { color: var(--muted); }
-.readout .unit { font-family: var(--font-display); font-stretch: 80%; font-weight: 700; font-size: 22px; color: var(--muted); margin-left: 4px; }
+.readout .unit { font-family: var(--font-display); font-stretch: 80%; font-weight: 700; font-size: var(--t-title2); color: var(--muted); margin-left: 4px; }
 .readout .side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding-bottom: 6px; }
-.readout .sub { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; color: var(--muted); }
+.readout .sub { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: var(--t-footnote); color: var(--muted); }
 .readout .sub b { color: var(--ink); font-weight: 500; }
 
 .chip {
   display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
-  font-size: 12px; font-weight: 600; border: 1px solid var(--rule); background: var(--panel); white-space: nowrap;
+  font-size: var(--t-caption1); font-weight: 600; border: 1px solid var(--rule); background: var(--panel); white-space: nowrap;
 }
 .chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .chip.good::before { background: var(--good); }
 .chip.warn::before { background: var(--warn); }
 .chip.bad::before { background: var(--bad); }
-.chip.live::before { background: var(--bad); animation: blink 1.2s steps(2) infinite; }
-@keyframes blink { 50% { opacity: 0.25; } }
-@media (prefers-reduced-motion: reduce) { .chip.live::before { animation: none; } }
 
 /* Spectrum */
 .scope { position: relative; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
 .scope canvas { display: block; width: 100%; height: 190px; touch-action: manipulation; }
-.scope .hint { position: absolute; right: 10px; bottom: 30px; font-size: 12px; color: var(--muted); pointer-events: none; }
+.scope .hint { position: absolute; left: 10px; bottom: 30px; font-size: var(--t-caption1); color: var(--muted); pointer-events: none; }
 .meter { height: 4px; background: var(--rule); border-radius: 2px; overflow: hidden; }
 .meter i { display: block; height: 100%; width: 0; background: var(--ink); transition: width 80ms linear; }
+@media (prefers-reduced-motion: reduce) { .meter i { transition: none; } }
 
 .status { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 22px; }
-.status p { font-size: 14px; }
+.status p { font-size: var(--t-subhead); }
 
 /* Candidates */
 .cands { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
 .cand {
-  flex: 0 0 auto; border: 1px solid var(--rule); background: var(--panel); border-radius: 8px;
-  padding: 6px 10px; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 1px;
+  flex: 0 0 auto; min-height: var(--tap); border: 1px solid var(--rule); background: var(--panel); border-radius: 8px;
+  padding: 6px 12px; text-align: left; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 1px;
 }
-.cand b { font-family: var(--font-data); font-weight: 600; font-size: 14px; }
-.cand span { font-size: 11px; color: var(--muted); }
+.cand b { font-family: var(--font-data); font-weight: 600; font-size: var(--t-subhead); }
+.cand span { font-size: var(--t-caption2); color: var(--muted); }
 .cand[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 
 /* Wheel-mode strip on the gauge */
@@ -149,67 +180,81 @@ p { margin: 0; }
   background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 8px;
 }
 .spokebar .mid { text-align: center; }
-.spokebar .mid strong { font-family: var(--font-display); font-stretch: 80%; font-size: 20px; font-weight: 750; }
-.spokebar .mid div { font-size: 12px; color: var(--muted); }
-.plucks { display: flex; justify-content: center; gap: 6px; margin-top: 4px; min-height: 18px; }
-.plucks span { font-family: var(--font-data); font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--bg); }
+.spokebar .mid strong { font-family: var(--font-display); font-stretch: 80%; font-size: var(--t-title3); font-weight: 750; }
+.spokebar .mid div { font-size: var(--t-caption1); color: var(--muted); }
+.plucks { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin-top: 4px; min-height: 18px; }
+.plucks span { font-family: var(--font-data); font-size: var(--t-caption2); padding: 1px 6px; border-radius: 4px; background: var(--bg); }
 
 /* Buttons */
 .btn {
-  border: 1px solid var(--rule); background: var(--panel); border-radius: 8px; padding: 10px 14px;
-  font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: var(--tap); border: 1px solid var(--rule); background: var(--panel); border-radius: 8px; padding: 8px 16px;
+  font-size: var(--t-body); font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-align: center;
 }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.btn.big { width: 100%; padding: 15px; font-size: 17px; border-radius: 12px; }
-.btn.icon { padding: 10px; min-width: 44px; min-height: 44px; }
+.btn.destructive { color: var(--bad); }
+.btn.big { width: 100%; min-height: 52px; padding: 12px 16px; border-radius: 12px; }
+.btn.icon { padding: 8px; min-width: var(--tap); font-size: var(--t-title3); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .row { display: flex; gap: 10px; flex-wrap: wrap; }
 .row > .btn { flex: 1 1 auto; }
+.filebtn:has(+ input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.footnote { font-size: var(--t-footnote); color: var(--muted); }
 
 /* Panels and forms */
 .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
-.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .field.full { grid-column: 1 / -1; }
-.field label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.field label { font-size: var(--t-footnote); font-weight: 600; color: var(--muted); }
 .field input, .field select {
-  width: 100%; border: 1px solid var(--rule); background: var(--bg); border-radius: 8px; padding: 9px 10px; font-size: 16px;
+  width: 100%; min-height: var(--tap); border: 1px solid var(--rule); background: var(--bg); border-radius: 8px; padding: 8px 10px;
+  font-size: max(16px, var(--t-body)); /* 16 px or more keeps iOS from zooming on focus */
 }
-.field input[type="range"] { padding: 0; border: 0; background: transparent; accent-color: var(--accent); }
-.field .help { font-size: 12px; color: var(--muted); }
-details.more > summary { cursor: pointer; font-weight: 600; font-size: 14px; color: var(--accent); list-style: none; }
+.field input[type="range"] { min-height: var(--tap); padding: 0; border: 0; background: transparent; accent-color: var(--accent); }
+.field .help, .help { font-size: var(--t-footnote); color: var(--muted); }
+details.more > summary {
+  display: flex; align-items: center; gap: 8px; min-height: var(--tap);
+  cursor: pointer; font-weight: 600; font-size: var(--t-subhead); color: var(--accent); list-style: none;
+}
 details.more > summary::-webkit-details-marker { display: none; }
-details.more[open] > summary { margin-bottom: 10px; }
-.sidehead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.calc-out { font-size: 13px; padding: 8px 10px; background: var(--bg); border-radius: 8px; }
+details.more > summary::after {
+  content: ""; width: 7px; height: 7px; margin-left: 2px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg); transition: transform 150ms ease;
+}
+details.more[open] > summary::after { transform: rotate(45deg); }
+@media (prefers-reduced-motion: reduce) { details.more > summary::after { transition: none; } }
+details.more[open] > summary { margin-bottom: 6px; }
+.sidehead { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.calc-out { font-size: var(--t-footnote); padding: 8px 10px; background: var(--bg); border-radius: 8px; min-height: var(--tap); display: flex; flex-direction: column; justify-content: center; }
 
 /* Wheel view */
 .wheelfig { display: block; width: 100%; max-width: 420px; margin: 0 auto; aspect-ratio: 1; }
-.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr)); gap: 10px; }
 .stat { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .stat .k { display: flex; align-items: center; gap: 6px; }
-.stat dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: 13px; }
+.stat dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: var(--t-footnote); }
 .stat dt { color: var(--muted); }
 .stat dd { margin: 0; text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 .tablewrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); }
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
-th { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+table { border-collapse: collapse; width: 100%; font-size: var(--t-footnote); }
+th, td { padding: 8px 12px; height: var(--tap); text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { font-size: var(--t-caption2); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; height: auto; }
 td:first-child, th:first-child { text-align: left; }
 td { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 tr.sel td { background: var(--band); }
 tr[data-hole] { cursor: pointer; }
 .dev.good { color: var(--good); } .dev.warn { color: var(--warn); } .dev.bad { color: var(--bad); }
-.banner { border: 1px dashed var(--rule); border-radius: var(--radius); padding: 10px 12px; font-size: 13px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.banner { border: 1px dashed var(--rule); border-radius: var(--radius); padding: 10px 12px; font-size: var(--t-footnote); display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.saved-row { padding: 6px 0; }
 
 /* Prose (About) */
 .prose { display: flex; flex-direction: column; gap: 10px; max-width: 65ch; }
-.prose p, .prose li { font-size: 15px; }
+.prose p, .prose li { font-size: var(--t-body); }
 .prose ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 .prose a { color: var(--accent); }
-.formula { font-family: var(--font-data); font-size: 13px; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+.formula { font-family: var(--font-data); font-size: var(--t-footnote); background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
 
-/* Tab bar */
+/* Tab bar: icon plus short label; the selected tab takes the accent tint. */
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
   background: var(--panel); border-top: 1px solid var(--rule);
@@ -219,18 +264,18 @@ tr[data-hole] { cursor: pointer; }
 .tabbar nav { max-width: 560px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); height: var(--tabbar-h); }
 .tabbar button {
   border: 0; background: transparent; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--muted);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted);
 }
-.tabbar button svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; }
-.tabbar button[aria-current="page"] { color: var(--ink); }
+.tabbar button svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+.tabbar button[aria-current="page"] { color: var(--accent); }
 
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%); z-index: 20;
   bottom: calc(var(--tabbar-h) + 14px + env(safe-area-inset-bottom, 0px));
-  background: var(--ink); color: var(--bg); padding: 9px 14px; border-radius: 8px; font-size: 14px; font-weight: 600;
+  background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: var(--t-subhead); font-weight: 600;
   max-width: calc(100% - 32px);
 }
-.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
 
 <div class="app">
@@ -245,14 +290,20 @@ tr[data-hole] { cursor: pointer; }
 
   <!-- GAUGE -->
   <section class="view" id="view-gauge">
-    <div class="seg" role="group" aria-label="Mode" id="modeSeg" style="align-self:flex-start">
-      <button type="button" data-mode="single">Single spoke</button>
-      <button type="button" data-mode="wheel">Map a wheel</button>
+    <div class="modes">
+      <div class="seg" role="group" aria-label="Mode" id="modeSeg">
+        <button type="button" data-mode="single">Single spoke</button>
+        <button type="button" data-mode="wheel">Map a wheel</button>
+      </div>
+      <div class="seg" role="group" aria-label="Spoke side" id="sideSeg">
+        <button type="button" data-side="R" aria-label="Right side"><span class="side-dot R" aria-hidden="true"></span>R</button>
+        <button type="button" data-side="L" aria-label="Left side"><span class="side-dot L" aria-hidden="true"></span>L</button>
+      </div>
     </div>
 
     <button type="button" class="context" id="contextChip">
-      <div class="what"><strong id="ctxSpoke">—</strong><span id="ctxDetail">—</span></div>
-      <span class="label">Edit</span>
+      <div class="what"><strong id="ctxSpoke">—</strong><span id="ctxDetail">—</span><span class="sr">. Edit spoke settings.</span></div>
+      <svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6"/></svg>
     </button>
 
     <div class="spokebar" id="spokeBar" hidden>
@@ -285,9 +336,10 @@ tr[data-hole] { cursor: pointer; }
     <div class="cands" id="cands" aria-label="Other peaks in this pluck"></div>
 
     <button type="button" class="btn primary big" id="listenBtn">Listen</button>
+    <p class="footnote" id="micNote">Listening uses the microphone only while it's on. Sound is analysed on this device and is never recorded or sent anywhere.</p>
     <div class="row">
       <button type="button" class="btn" id="demoBtn">Demo pluck</button>
-      <label class="btn" for="fileIn">Analyse a recording</label>
+      <label class="btn filebtn" for="fileIn">Analyse a recording</label>
       <input type="file" id="fileIn" accept="audio/*,.m4a,.wav,.mp3,.caf,.aac" class="sr">
       <button type="button" class="btn" id="toneBtn">Reference tone</button>
     </div>
@@ -306,7 +358,7 @@ tr[data-hole] { cursor: pointer; }
       </div>
     </div>
     <svg class="wheelfig" id="wheelFig" viewBox="0 0 400 400" role="img" aria-label="Tension of each spoke around the wheel"></svg>
-    <p class="small muted" id="wheelLegend"></p>
+    <p class="footnote" id="wheelLegend"></p>
     <div class="stats" id="stats"></div>
     <div class="tablewrap"><table id="spokeTable"></table></div>
     <div class="row">
@@ -379,13 +431,13 @@ tr[data-hole] { cursor: pointer; }
 
 <div class="tabbar">
   <nav aria-label="Sections">
-    <button type="button" data-view="gauge"><svg viewBox="0 0 24 24"><path d="M4 16a8 8 0 1 1 16 0"/><path d="M12 16l4.5-5.5"/><circle cx="12" cy="16" r="1.4"/></svg>Gauge</button>
-    <button type="button" data-view="wheel"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2"/><path d="M12 3v7M12 14v7M3 12h7M14 12h7M5.6 5.6l5 5M13.4 13.4l5 5M18.4 5.6l-5 5M10.6 13.4l-5 5"/></svg>Wheel</button>
-    <button type="button" data-view="setup"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Setup</button>
-    <button type="button" data-view="about"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>How it works</button>
+    <button type="button" data-view="gauge"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 16a8 8 0 1 1 16 0"/><path d="M12 16l4.5-5.5"/><circle cx="12" cy="16" r="1.4"/></svg>Gauge</button>
+    <button type="button" data-view="wheel"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2"/><path d="M12 3v7M12 14v7M3 12h7M14 12h7M5.6 5.6l5 5M13.4 13.4l5 5M18.4 5.6l-5 5M10.6 13.4l-5 5"/></svg>Wheel</button>
+    <button type="button" data-view="setup"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Setup</button>
+    <button type="button" data-view="about"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>About</button>
   </nav>
 </div>
-<div class="toast" id="toast" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script>
 /*APP_SCRIPT*/

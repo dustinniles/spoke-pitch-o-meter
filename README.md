@@ -12,7 +12,7 @@ To host it anywhere else, run `node tools/build.mjs` and upload `dist/site` to a
 
 ## Using it
 
-1. **Setup tab:** choose the spoke and enter the **free length**. That's the distance from where the spoke leaves the nipple to the middle of the crossing where it touches another spoke. For radial spokes, or crossings that don't touch, measure to the hub flange and set "Far end" to "Runs to the hub flange". You can also compute the length from ERD, flange diameter, flange offset and cross pattern.
+1. **Setup tab:** choose the spoke and enter the **free length**. That's the distance from where the spoke leaves the nipple to the middle of the crossing where it touches another spoke. For radial spokes, or crossings that don't touch, measure to the hub flange and set "Measured to" to "The hub". You can also compute the length from ERD, flange diameter, flange offset and cross pattern.
 2. **Gauge tab:** tap **Listen**. Rest a fingertip on the spoke that crosses the one you're measuring, near the cross, and pluck sideways near the middle of the free length. Bladed spokes: pluck across the flat face.
 3. **Map a wheel:** each spoke records once two plucks agree within 2.5%, then the gauge moves to the next spoke. The **Wheel** tab shows the tension map, per-side statistics, and spokes beyond ±10% / ±20% of their side's average. Tap any spoke to re-measure it.
 4. If a reading says **Unsure**, the pluck had two plausible peaks. Pluck again with the crossing spoke damped, or tap the right peak in the spectrum or the chips below it.
@@ -37,7 +37,7 @@ No microphone (for example inside the claude.ai preview)? **Analyse a recording*
 | `src/app.js`, `src/index.template.html` | UI, microphone pipeline (AudioWorklet, ScriptProcessor fallback), wheel mapping |
 | `tools/build.mjs` | Inlines everything into `dist/spoke-pitch-o-meter.html` (single file) and `dist/site/` (PWA, what Pages serves) |
 | `tools/wilson-fit.mjs` | The load-cell comparison above |
-| `test/` | Unit tests (`node --test test/*.test.mjs`) and a Chromium fake-microphone end-to-end test (`node test/e2e.mjs`) |
+| `test/` | Unit tests (`node --test test/*.test.mjs`), a Chromium fake-microphone end-to-end test (`node test/e2e.mjs`), and an Apple HIG audit (`node test/hig-audit.mjs`: 44 pt hit targets, 11 pt minimum text, no sideways scrolling, at iPhone SE and iPhone widths, light and dark, default and large Dynamic Type) |
 
 Build with `node tools/build.mjs`. There are no dependencies beyond Node 18+; the e2e test uses Playwright.
 
