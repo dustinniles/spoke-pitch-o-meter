@@ -137,3 +137,27 @@ test('glide correction survives a weaker crossing-spoke mode 4 % below', () => {
   const r = gliding(113, 0.015, { extra: [{ ratio: Math.sqrt(104 / 113), amp: 0.1, decay: 3 }] });
   assert.ok(Math.abs(r.best.T / G - 113) < 0.8, `got ${(r.best.T / G).toFixed(2)}`);
 });
+
+test('two modes 0.4 % apart are split instead of averaged', () => {
+  const T = 110 * G, f1 = model.freqAt(T), r = model.ratiosAt(T);
+  const pre = 0.15;
+  const { x } = synthPluck({ fs, dur: 0.8, pre, seed: 4, partials: [
+    { f: f1, amp: 0.25, decay: 3 }, { f: f1 * 1.004, amp: 0.15, decay: 3.2 },
+    { f: f1 * r[0], amp: 0.06, decay: 5 }, { f: f1 * r[1], amp: 0.04, decay: 7 }] });
+  const res = analyzePluck(x, fs, { model, preSamples: Math.round(pre * fs) });
+  const fftT = model.tensionAt(res.best.fFft) / G;
+  assert.ok(res.best.doublet, 'doublet detected');
+  assert.ok(Math.abs(res.best.T / G - 110) < 0.3, `pencil ${(res.best.T / G).toFixed(2)} (FFT alone ${fftT.toFixed(2)})`);
+});
+
+test('a bladed spoke’s flat-face mode is chosen over a louder edge-on twin', () => {
+  const blade = { dThread: 2.0, dHead: 2.0, mid: { t: 0.9, d0: 1.4385 }, threadButt: 8, headButt: 30, taper: 10, massFactor: 1.035 };
+  const bm = buildSpokeModel({ spoke: blade, lengthMm: 200 });
+  const T = 105 * G, fThin = bm.freqAt(T, 'thin'), fWide = bm.freqAt(T, 'wide');
+  const pre = 0.15;
+  const { x } = synthPluck({ fs, dur: 0.8, pre, seed: 8, partials: [
+    { f: fThin, amp: 0.15, decay: 3 }, { f: fWide, amp: 0.22, decay: 3 },
+    { f: fThin * bm.ratiosAt(T, 'thin')[1], amp: 0.04, decay: 7 }] });
+  const res = analyzePluck(x, fs, { model: bm, preSamples: Math.round(pre * fs) });
+  assert.ok(Math.abs(res.best.T / G - 105) < 0.5, `got ${(res.best.T / G).toFixed(2)} kgf; split ${((fWide / fThin - 1) * 100).toFixed(2)} %`);
+});

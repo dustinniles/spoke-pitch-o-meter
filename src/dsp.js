@@ -1,4 +1,5 @@
 // Signal processing: pluck detection, spectrum, and peak identification.
+import { matrixPencil, baseband } from './pencil.js';
 
 // --- FFT -------------------------------------------------------------------
 
@@ -340,7 +341,9 @@ export function analyzePluck(x, fs, { model = null, preSamples = 0, expectedT = 
   });
   cands.sort((p, q) => q.score - p.score);
 
-  // Correct the leading candidates for pitch glide.
+  // Correct the leading candidates for pitch glide. This runs before the
+  // doublet split: the pencil assumes constant pitch and would mistake a glide
+  // for two close modes.
   if (cands.length && x.length - a > fs * 0.3) {
     const frames = glideFrames(x, fs, a);
     for (const c of cands.slice(0, 3)) {
@@ -354,13 +357,46 @@ export function analyzePluck(x, fs, { model = null, preSamples = 0, expectedT = 
     }
   }
 
+  // Split hidden doublets. Two modes within ~0.5 % merge into one FFT peak
+  // and bias it; the matrix pencil separates them (Hua & Sarkar 1990;
+  // Laroche 1993 for musical signals).
+  for (const c of cands.slice(0, 2)) {
+    if (c.glide) continue;
+    const len = Math.min(Math.round(0.45 * fs), x.length - a);
+    const bb = len > fs * 0.2 ? baseband(x, fs, a, len, c.f) : null;
+    if (!bb) continue;
+    let poles;
+    try { poles = matrixPencil(bb.re, bb.im, bb.rate, { order: 5 }); } catch { continue; }
+    const near = poles.filter((q) => Math.abs(q.freq) < c.f * 0.012 && q.damping > -1 && q.damping < 40);
+    if (!near.length) continue;
+    const top = near[0].amp;
+    const sig = near.filter((q) => q.amp > 0.2 * top);
+    let pick = sig[0];
+    if (sig.length >= 2) {
+      const [p, q] = sig;
+      const lo = p.freq < q.freq ? p : q, hi = lo === p ? q : p;
+      c.doublet = { spacing: (hi.freq - lo.freq) / (c.f + lo.freq), ratio: Math.min(p.amp, q.amp) / Math.max(p.amp, q.amp) };
+      // A bladed spoke's flat-face mode sits just below its edge-on twin.
+      if (model && pols.includes('wide')) {
+        const split = model.freqAt(model.tensionAt(c.f + lo.freq, 'thin'), 'wide') / (c.f + lo.freq);
+        if (Math.abs((c.f + hi.freq) / (c.f + lo.freq) - split) < 0.003) pick = lo;
+      }
+    }
+    const fNew = c.f + pick.freq;
+    if (Math.abs(fNew / c.f - 1) < 0.01) {
+      c.fFft = c.f;
+      c.f = fNew;
+      if (model) c.T = model.tensionAt(c.f, c.pol ?? 'thin');
+    }
+  }
+
   // Overtone cross-check: the 2nd and 3rd partials' ratios to the fundamental
   // give a second tension estimate that barely depends on how rigidly the
   // nipple and crossing hold the spoke (they shift every partial alike).
   if (model && cands.length) {
     for (const c of cands.slice(0, 3)) {
       const pol = c.pol ?? 'thin';
-      const f1 = c.fRaw ?? c.f;
+      const f1 = c.fRaw ?? c.f; // before glide correction, like the partials
       const ratios = model.ratiosAt(c.T, pol);
       const est = [];
       ratios.forEach((r, i) => {
@@ -368,8 +404,10 @@ export function analyzePluck(x, fs, { model = null, preSamples = 0, expectedT = 
         if (h) est.push({ mode: i + 2, T: model.tensionFromRatio(h.f / f1, i + 1, pol), level: h.level });
       });
       if (est.length) {
-        // Prefer the stronger partial; the ratio is most sensitive for higher modes.
-        est.sort((p, q) => q.level - p.level);
+        // Prefer the 3rd partial: its ratio is the most sensitive to tension,
+        // and tension modulation puts a phantom component at exactly 2·f1
+        // close to the 2nd (Legge & Fletcher 1984; Bank & Sujbert 2005).
+        est.sort((p, q) => (q.mode === 3) - (p.mode === 3) || q.level - p.level);
         c.overtone = { T: est[0].T, mode: est[0].mode, all: est };
       }
     }

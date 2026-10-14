@@ -9,10 +9,12 @@
 
 export const G = 9.80665; // N per kgf
 
-// Cold-drawn 18/8 stainless spring wire: 7.90–7.93 g/cm³; E falls from
-// ~195 GPa to ~185 GPa with the cold work spokes receive.
+// Cold-drawn 18/8 stainless spring wire: 7.90–7.93 g/cm³. Published E for
+// spoke wire ranges from 185–195 GPa (302 spring wire, cold-worked) to
+// 210 GPa (Gavin 1996, tensile test on a spoke); 195 GPa splits the
+// difference, and E only enters through the bending terms (≈1 % in T).
 export const MATERIALS = {
-  steel: { name: 'Stainless steel', rho: 7920, E: 190e9 },
+  steel: { name: 'Stainless steel', rho: 7920, E: 195e9 },
   titanium: { name: 'Titanium (6Al-4V)', rho: 4430, E: 114e9 },
   aluminum: { name: 'Aluminium (7075)', rho: 2810, E: 71.7e9 },
 };
@@ -146,8 +148,25 @@ function bandedMul(B, n, bw, x) {
 function dot(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
 
 // Assemble and solve. Returns natural frequencies in Hz (ascending).
-// nearEnd/farEnd: 'clamped' or 'pinned'.
-export function beamModes({ L, T, props, nearEnd = 'clamped', farEnd = 'pinned', nModes = 4, nElem = 80 }) {
+// nearEnd/farEnd: 'clamped' or 'pinned'. `supports` lists interior points
+// (m from x = 0) held against lateral motion but free to rotate, so the beam
+// runs on through them, as a spoke runs on through a crossing to the hub.
+export function beamModes({ L, T, props, nearEnd = 'clamped', farEnd = 'pinned', nModes = 4, nElem = 80, supports = [] }) {
+  // Mesh each span separately, graded towards its ends where curvature
+  // concentrates, with a node exactly on every support.
+  const cuts = [0, ...supports.filter((x) => x > 0 && x < L).sort((a, b) => a - b), L];
+  const xsList = [0];
+  const supportNodes = [];
+  for (let sp = 0; sp < cuts.length - 1; sp++) {
+    const a = cuts[sp], b = cuts[sp + 1];
+    const ne = Math.max(12, Math.round(nElem * (b - a) / L));
+    for (let i = 1; i <= ne; i++) {
+      const u = i / ne;
+      xsList.push(a + (b - a) * (u - Math.sin(2 * Math.PI * u) / (2 * Math.PI) * 0.6));
+    }
+    if (sp < cuts.length - 2) supportNodes.push(xsList.length - 1);
+  }
+  nElem = xsList.length - 1;
   const nNodes = nElem + 1;
   const nFull = nNodes * 2;
   // Constrained DOFs.
@@ -155,6 +174,7 @@ export function beamModes({ L, T, props, nearEnd = 'clamped', farEnd = 'pinned',
   if (nearEnd === 'clamped') fixed.add(1);
   fixed.add(2 * nElem);
   if (farEnd === 'clamped') fixed.add(2 * nElem + 1);
+  for (const n of supportNodes) fixed.add(2 * n);
   const map = new Int32Array(nFull).fill(-1);
   let n = 0;
   for (let d = 0; d < nFull; d++) if (!fixed.has(d)) map[d] = n++;
@@ -162,12 +182,7 @@ export function beamModes({ L, T, props, nearEnd = 'clamped', farEnd = 'pinned',
   const K = new Float64Array(n * (bw + 1));
   const M = new Float64Array(n * (bw + 1));
 
-  // Mesh graded towards both ends, where clamped boundary layers live.
-  const xs = new Float64Array(nNodes);
-  for (let i = 0; i < nNodes; i++) {
-    const u = i / nElem;
-    xs[i] = L * (u - Math.sin(2 * Math.PI * u) / (2 * Math.PI) * 0.6);
-  }
+  const xs = Float64Array.from(xsList);
 
   for (let e = 0; e < nElem; e++) {
     const h = xs[e + 1] - xs[e];

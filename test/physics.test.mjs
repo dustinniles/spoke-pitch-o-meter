@@ -96,3 +96,12 @@ test('spoke model inverts its own frequencies', () => {
     assert.ok(Math.abs(back - tk) < 0.05, `${tk} → ${f} Hz → ${back}`);
   }
 });
+
+test('an interior support splits the beam into continuous spans', () => {
+  // Two equal pinned spans: the lowest mode is each span vibrating on its
+  // own in opposite senses, exactly the single-span frequency.
+  const T = 110 * G, L = 0.4;
+  const f = beamModes({ L, T, props: uniform, nearEnd: 'pinned', farEnd: 'pinned', supports: [L / 2], nModes: 1 })[0];
+  const exact = pinnedPinnedFreq(L / 2, T, mu, EI, 1);
+  assert.ok(rel(f, exact) < 1e-5, `${f} vs ${exact}`);
+});

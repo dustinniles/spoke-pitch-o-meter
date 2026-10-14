@@ -22,7 +22,10 @@ No microphone handy, or want to measure from a recording? **Analyse a recording*
 ## How accurate is it
 
 - **Spoke-to-spoke:** pluck-to-pluck repeatability is about 1%. That's what truing and tension balancing need.
-- **Absolute:** roughly ±5%. The free length matters most: ±2 mm on a 195 mm segment is about ±2.5%. Spoke mass data and how rigidly the nipple and crossing hold the spoke make up the rest.
+- **Absolute:** roughly ±5–7%. The free length matters most: ±2 mm on a 195 mm segment is about ±2.7%. The rest is spoke mass data and, above all, how the nipple and the crossing hold the spoke.
+- **Pluck strength:** a firm pluck stretches the spoke and rings sharp until it decays (Legge & Fletcher 1984). The app tracks the pitch through the decay and extrapolates to zero amplitude.
+- **Close modes:** a bladed spoke's two bending planes, or a spoke and its crossing partner, can sit under 1% apart and merge into one FFT peak. Each leading peak is re-fitted with the matrix pencil method (Hua & Sarkar 1990).
+- **The crossing is the open question.** The spoke runs on past the cross to the hub, which raises the pitch 3–4% compared with the pinned model. A springy crossing lowers it by about as much or more. Frequencies alone can't separate the two ends (Geuzaine, Foti & Denoël 2021), so the model stays with the middle case. The **overtone check** (2nd and 3rd partials) barely depends on the ends, and its average gap per side on the Wheel tab measures the real behaviour on your wheels.
 - **Load-cell check:** Thomas Wilson's 2019 test of the original app shows its error drifting from +10% at 45 kgf to −3.5% at 155 kgf. Fitted to his data, the plain string formula leaves 3.4 kgf RMS of systematic error; this beam model leaves 0.7 kgf. Run `node tools/wilson-fit.mjs` to reproduce it.
 - **Calibration:** if you ever get access to a trusted reference (a load cell, a crane scale in a simple rig, a good tensiometer), enter pairs in Setup → Calibration. The median ratio is applied to that spoke type.
 
@@ -31,7 +34,8 @@ No microphone handy, or want to measure from a recording? **Analyse a recording*
 | Path | What |
 |---|---|
 | `src/physics.js` | Finite-element tensioned-beam model (Hermite elements, banded Cholesky, inverse iteration); spoke profiles; f⇄T tables |
-| `src/dsp.js` | FFT, pluck detector, spectrum peak finder, candidate scoring (overtone fingerprint, sustain, SNR, bladed-spoke twin modes), synthetic plucks |
+| `src/dsp.js` | FFT, pluck detector, spectrum peak finder, candidate scoring (overtone fingerprint, sustain, SNR, bladed-spoke twin modes), pitch-glide correction, overtone cross-check, synthetic plucks |
+| `src/pencil.js` | Matrix pencil method (complex baseband, Jacobi eigensolver) for splitting modes under 1% apart |
 | `src/geometry.js` | Spoke length and interlaced-cross position from wheel geometry |
 | `src/spokes.js` | Spoke database (DT Swiss, Sapim, Pillar, Wheelsmith, plain gauge), with sources and the mass-factor rationale |
 | `src/app.js`, `src/index.template.html` | UI, microphone pipeline (AudioWorklet, ScriptProcessor fallback), wheel mapping |
@@ -48,5 +52,10 @@ Build with `node tools/build.mjs`. There are no dependencies beyond Node 18+; th
 - *Human Power* No. 53 (2002), tensiometer vs. musical pitch on 140 spokes: <https://www.ihpva.org/HParchive/PDF/hp53-2002.pdf>
 - Bobbit, Kazi & Li, "Acoustic Spoke Tensiometer for Bicycle Wheels", UIUC ECE 445 (2012)
 - Sheldon Brown / John Allen, "Check spoke tension by ear": <https://www.sheldonbrown.com/spoke-pitch.html>
+- Geuzaine, Foti & Denoël, "On the identification of the axial force and bending stiffness of stay cables anchored to flexible supports", J. Sound Vib. 511 (2021)
+- Legge & Fletcher, "Nonlinear generation of missing modes on a vibrating string", JASA 76 (1984), doi:10.1121/1.391007
+- Hua & Sarkar, "Matrix pencil method for estimating parameters of exponentially damped/undamped sinusoids in noise", IEEE TASSP 38 (1990), doi:10.1109/29.56027
+- Weinreich, "Coupled piano strings", JASA 62 (1977), doi:10.1121/1.381677
+- Ford, "Reinventing the Wheel: Stiffness and Strength of Bicycle Wheels", PhD thesis, Northwestern University (2018)
 
 Spoke Pitch-o-meter is independent and not affiliated with any of the above. Never exceed your rim maker's maximum tension.

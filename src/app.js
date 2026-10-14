@@ -115,7 +115,15 @@ function sideStats(w, s) {
   const min = Math.min(...Ts), max = Math.max(...Ts);
   const out10 = vals.filter((v) => Math.abs(v.T / mean - 1) > 0.10).length;
   const out20 = vals.filter((v) => Math.abs(v.T / mean - 1) > 0.20).length;
-  return { n: vals.length, total, mean, sd, min, max, out10, out20, median: median(Ts) };
+  // How the overtone estimates compare with the main readings on this side.
+  const ratios = [];
+  for (const [h, r] of Object.entries(w.readings)) {
+    if (holeSide(w, +h) !== s) continue;
+    const ov = (r.plucks ?? []).map((p) => p.To).filter((v) => v);
+    if (ov.length && r.T) ratios.push(median(ov) / r.T);
+  }
+  const overtone = ratios.length ? { n: ratios.length, gap: median(ratios) - 1 } : null;
+  return { n: vals.length, total, mean, sd, min, max, out10, out20, median: median(Ts), overtone };
 }
 
 function median(a) { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
@@ -389,7 +397,7 @@ function renderReading() {
   const relL = 2.1 * state.settings.lengthTol / side.lengthMm;
   const spoke = spokeById(side.spokeId);
   const relM = spoke.mid.t ? 0.03 : 0.02;
-  const rel = Math.sqrt(relL ** 2 + relM ** 2 + 0.04 ** 2);
+  const rel = Math.sqrt(relL ** 2 + relM ** 2 + 0.05 ** 2);
   $('absErr').textContent = `±${fmtT(T * rel)} ${state.unit} absolute (est.)`;
   // Independent estimate from the overtones; a persistent gap points at the
   // free length or at how rigidly the nipple and crossing hold the spoke.
@@ -759,7 +767,8 @@ function renderWheel() {
     el.innerHTML = `<div class="k"><span class="side-dot ${sk}"></span><b class="small">${sideName(w, sk)}</b></div>
       ${st.n ? `<div><span class="data" style="font-size:22px;font-weight:600">${fmtT(st.mean)}</span> <span class="muted small">${state.unit} avg</span></div>
       <dl><dt>Measured</dt><dd>${st.n}/${st.total}</dd><dt>Range</dt><dd>${fmtT(st.min)}–${fmtT(st.max)}</dd>
-      <dt>Std dev</dt><dd>${(st.sd / st.mean * 100).toFixed(1)}%</dd><dt>Beyond ±10%</dt><dd>${st.out10}</dd></dl>
+      <dt>Std dev</dt><dd>${(st.sd / st.mean * 100).toFixed(1)}%</dd><dt>Beyond ±10%</dt><dd>${st.out10}</dd>
+      ${st.overtone ? `<dt>Overtone check</dt><dd>${st.overtone.gap >= 0 ? '+' : '−'}${Math.abs(st.overtone.gap * 100).toFixed(1)}% (${st.overtone.n})</dd>` : ''}</dl>
       <span class="chip ${cls}">${st.out20 ? st.out20 + ' beyond ±20%' : st.out10 ? 'Close; true it up' : 'Even'}</span>` : `<p class="small muted">No readings yet.</p>`}`;
     sb.appendChild(el);
   }
@@ -1062,13 +1071,14 @@ function renderAbout() {
       <li><b>It treats the spoke as a stiff beam, not a string.</b> A spoke resists bending, which raises its pitch, most of all at low tension and near the nipple, where it's held rigidly. The classic formula <span class="data">T = 4·μ·L²·f²</span> ignores this and reads high. The Pitch-o-meter solves the tensioned-beam equation along the actual spoke, butted ends and bladed sections included.</li>
       <li><b>It identifies the right peak.</b> A plucked spoke in a wheel also excites the spoke it crosses and the pair as a whole. Each candidate is checked for its overtone fingerprint (a stiff spoke's overtones sit slightly sharp of whole multiples), how long it rings, and how far it stands above the room noise. When two peaks are close calls, it says so, and you can tap the right one.</li>
       <li><b>It corrects for how hard you pluck.</b> A firm pluck stretches the spoke and raises its pitch until the ring dies down; a 2 mm pluck can read 5% high. The app follows the pitch as the ring decays and works back to what it would be at zero amplitude.</li>
+      <li><b>It splits modes the FFT can't.</b> A bladed spoke rings in two planes less than 1% apart, and a round one held differently in each direction by the cross can too. Those merge into one FFT peak and bias it, so each leading peak is re-fitted with the matrix pencil method, which separates them; for bladed spokes the flat-face mode is used.</li>
       <li><b>It cross-checks with the overtones.</b> A stiff spoke's overtones sit slightly sharp of whole multiples, by an amount that depends on tension but hardly at all on how the ends are held. That gives a second, independent estimate, shown under each reading as the overtone check. A steady gap between the two points to the free length or to the end conditions.</li>
       <li><b>It reports uncertainty.</b> Every reading shows an estimated absolute error and, while mapping a wheel, waits for plucks that agree.</li>
     </ul>
     <h3>Checked against a load cell</h3>
     <p>Thomas Wilson tested the original iPhone app on Industry Nine's load-cell rig with a Sapim CX-Ray. Its readings drifted from 10% high at 45 kgf to 3.5% low at 155 kgf. That is the signature of ignoring bending stiffness. Fitting the plain string formula to his twelve points leaves a systematic error of 3.4 kgf RMS. The beam model used here leaves 0.7 kgf, which is the old app's display resolution. That test checks the shape of the correction; the absolute scale still rests on the spoke data and your length measurement.</p>
     <h3>Spoke data</h3>
-    <p>Diameters come from DT Swiss, Sapim and Pillar. Real spoke wire runs slightly heavy: DT's published weights for its plain-gauge Champion spokes are about 3.5% above the nominal wire size, so masses are scaled up by that much. Butt lengths aren't published; they shift readings by less than 1%. Steel is taken as 7.92 g/cm³ with a modulus of 190 GPa.</p>
+    <p>Diameters come from DT Swiss, Sapim and Pillar. Real spoke wire runs slightly heavy: DT's published weights for its plain-gauge Champion spokes are about 3.5% above the nominal wire size, so masses are scaled up by that much. Butt lengths aren't published; they shift readings by less than 1%. Steel is taken as 7.92 g/cm³ with a modulus of 195 GPa, between the handbook value for cold-drawn spring wire and a tensile test on actual spoke wire.</p>
     <h3>Your current spoke, worked through</h3>
     <p>${escapeHtml(spokeLabel(spokeById(side.spokeId)))}, ${side.lengthMm} mm free: at 110 kgf it rings at <span class="data">${f.toFixed(1)} Hz</span> (${noteName(f)}). The plain string formula would call that pitch <span class="data">${naive.toFixed(0)} kgf</span>, ${((naive / 110 - 1) * 100).toFixed(0)}% high.</p>
     <div class="formula">EI·w'''' − T·w'' + μ·ẅ = 0 · clamped at the nipple, pinned at the cross<br>finite-element solution, ${m.tables.thin.length} tensions × ${m.polarizations.length} bending plane${m.polarizations.length > 1 ? 's' : ''}</div>
@@ -1080,13 +1090,20 @@ function renderAbout() {
       <li>Hold the phone 10–20 cm away, bottom edge (the microphone) toward the spoke, in a quiet room.</li>
     </ul>
     <h3>How accurate is it?</h3>
-    <p>Spoke-to-spoke comparisons, which are what truing needs, repeat to about 1%. Absolute tension depends on the free length you enter, the spoke's published dimensions, and how rigidly the nipple and the crossing hold the spoke. Expect roughly ±4–6% until you calibrate against a trusted reference. For scale, a load-cell test of shop tensiometers found the Park TM-1 and Wheel Fanatyk reading about 100 N low and the DT Swiss Tensio about 100 N high using their own charts.</p>
+    <p>Spoke-to-spoke comparisons, which are what truing needs, repeat to about 1%. Absolute tension depends on the free length you enter, the spoke's published dimensions, and how the nipple and the crossing hold the spoke. Expect roughly ±5–7% until you calibrate against a trusted reference. For scale, a load-cell test of shop tensiometers found the Park TM-1 and Wheel Fanatyk reading about 100 N low and the DT Swiss Tensio about 100 N high using their own charts.</p>
+    <h3>What is still uncertain</h3>
+    <p>The crossing. The model treats it as a pin, but two effects pull in opposite directions. The spoke runs on past the cross to the hub, and that short span resists rotation, which raises the pitch about 3–4%. The crossing spoke is itself springy, which lowers it by a similar amount or more. Bridge engineers measuring cable tension hit the same wall: frequencies alone reveal only the combined effect of both ends, never each end separately. The overtone check is the tool for this. It barely depends on the ends, so on a real wheel its average gap from the main reading (shown per side on the Wheel tab) measures how your nipples and crossings actually behave.</p>
+    <p>Two crossing spokes also ring together. When they're pressed into each other they form pairs of modes, one with the crossing still and one with both spokes swinging together at a lower pitch, about three quarters of the main one. A finger on the partner spoke damps the pair and stops it pulling the reading toward its own pitch.</p>
     <h3>Background</h3>
     <ul>
       <li>Douglas Pepelko's <i>Spoke Tension Gauge</i> (iOS, 2012–2016) pioneered this on phones; its Android sibling is <a href="https://www.mega-mouse.net/" target="_blank" rel="noopener">Spoke Tensioner</a>.</li>
       <li>Thomas Wilson, <a href="https://savetheneurons.blogspot.com/2019/01/your-spoke-tension-meter-is-probably.html" target="_blank" rel="noopener">“Your spoke tension meter is probably…”</a> (2019): the load-cell comparison above.</li>
       <li><a href="https://www.ihpva.org/HParchive/PDF/hp53-2002.pdf" target="_blank" rel="noopener"><i>Human Power</i> No. 53</a> (2002): 140 spokes, tensiometer vs. pitch, with an empirical stiffness length correction that matches this model.</li>
       <li><a href="https://www.sheldonbrown.com/spoke-pitch.html" target="_blank" rel="noopener">Sheldon Brown: Check spoke tension by ear</a>.</li>
+      <li>Geuzaine, Foti &amp; Denoël, “On the identification of the axial force and bending stiffness of stay cables anchored to flexible supports”, <i>Journal of Sound and Vibration</i> (2021): why the two end conditions can't be told apart from frequencies.</li>
+      <li>Legge &amp; Fletcher, “Nonlinear generation of missing modes on a vibrating string”, <i>JASA</i> (1984): the pitch rise from hard plucks.</li>
+      <li>Hua &amp; Sarkar, “Matrix pencil method for estimating parameters of exponentially damped/undamped sinusoids in noise”, <i>IEEE Trans. ASSP</i> (1990): splitting near-identical modes.</li>
+      <li>Weinreich, “Coupled piano strings”, <i>JASA</i> (1977): how two strings sharing a support pull each other's pitch.</li>
     </ul>
     <p class="small muted">Spoke Pitch-o-meter is an independent tool, not affiliated with any of the above. Never exceed your rim maker's maximum tension.</p>`;
 }
