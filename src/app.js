@@ -106,10 +106,36 @@ function sideName(w, s) {
   return w.type === 'frontDisc' ? 'Left · rotor side' : (w.type === 'rear' ? 'Left · non-drive' : 'Left side');
 }
 
+// Readings more than 1.6× off their side's median. On a real wheel these were
+// the wrong tone: an overtone (4× the tension or more) or the crossed pair
+// swinging together (about 0.6×). A spoke can really be that far off, but
+// either way it needs re-measuring before anyone turns a nipple on it.
+const SUSPECT = Math.log(1.6);
+function suspectHoles(w, s) {
+  const vals = Object.entries(w.readings).filter(([h]) => holeSide(w, +h) === s);
+  if (vals.length < 5) return new Set();
+  const m = median(vals.map(([, r]) => r.T));
+  return new Set(vals.filter(([, r]) => Math.abs(Math.log(r.T / m)) > SUSPECT).map(([h]) => +h));
+}
+
+// Crossed partners (same-side neighbours) that read the same pitch to within
+// 0.15 %. On a real wheel six such pairs matched to 0.07 % or better while
+// other neighbours differed by 2–6 %: the pair was ringing as one, so each
+// reading sits nearer their average than the spoke's own tension.
+function partnerMatch(w, h) {
+  const r = w.readings[h];
+  if (!r?.f || !r.done) return null;
+  return sameSideNeighbours(w, h).find((n) => {
+    const q = w.readings[n];
+    return q?.f && q.done && Math.abs(q.f / r.f - 1) < 0.0015;
+  }) ?? null;
+}
+
 function sideStats(w, s) {
-  const vals = Object.entries(w.readings).filter(([h]) => holeSide(w, +h) === s).map(([h, r]) => ({ h: +h, T: r.T }));
+  const sus = suspectHoles(w, s);
+  const vals = Object.entries(w.readings).filter(([h]) => holeSide(w, +h) === s && !sus.has(+h)).map(([h, r]) => ({ h: +h, T: r.T }));
   const total = Array.from({ length: w.count }, (_, i) => i + 1).filter((h) => holeSide(w, h) === s).length;
-  if (!vals.length) return { n: 0, total };
+  if (!vals.length) return { n: 0, total, suspect: sus };
   const Ts = vals.map((v) => v.T);
   const mean = Ts.reduce((a, b) => a + b, 0) / Ts.length;
   const sd = Math.sqrt(Ts.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, Ts.length - 1));
@@ -119,12 +145,26 @@ function sideStats(w, s) {
   // How the overtone estimates compare with the main readings on this side.
   const ratios = [];
   for (const [h, r] of Object.entries(w.readings)) {
-    if (holeSide(w, +h) !== s) continue;
+    if (holeSide(w, +h) !== s || sus.has(+h)) continue;
     const ov = (r.plucks ?? []).map((p) => p.To).filter((v) => v);
     if (ov.length && r.T) ratios.push(median(ov) / r.T);
   }
   const overtone = ratios.length ? { n: ratios.length, gap: median(ratios) - 1 } : null;
-  return { n: vals.length, total, mean, sd, min, max, out10, out20, median: median(Ts), overtone };
+  return { n: vals.length, total, mean, sd, min, max, out10, out20, median: median(Ts), overtone, suspect: sus };
+}
+
+// Expected tension of side `sk` relative to the other side. Sideways pulls
+// balance, so tension goes with spoke length over flange offset; without
+// offsets entered for both sides, a typical dish for the wheel type.
+function sideRatio(w, sk) {
+  const o = sk === 'R' ? 'L' : 'R';
+  const a = w.sides[sk].geo, b = w.sides[o].geo;
+  if (a && b && a.offset > 0 && b.offset > 0 && a.offset !== b.offset) {
+    const len = (g) => wheelGeometry({ erd: g.erd, spokes: w.count, crosses: g.crosses, flangePcd: g.pcd, flangeOffset: g.offset, nippleLen: g.nipple }).length;
+    return (b.offset / len(b)) / (a.offset / len(a));
+  }
+  const lr = w.type === 'rear' ? 0.6 : w.type === 'frontDisc' ? 1.25 : 1; // left ÷ right
+  return sk === 'L' ? lr : 1 / lr;
 }
 
 function median(a) { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
@@ -192,12 +232,20 @@ function calibFactor(spokeId) {
   return rows.length ? median(rows.map((c) => c.ref / c.app)) : 1;
 }
 
-function expectedT(sideKey) {
-  const st = sideStats(state.wheel, sideKey);
-  if (st.n >= 3) return st.median;
-  const tgt = state.wheel.sides[sideKey].targetKgf;
-  return tgt ? tgt * G : null;
+// Where this side's tension should be, and how firmly to lean on that when
+// choosing among peaks: the side's own median once a few spokes are in, else
+// the target, else the other side's median scaled for dish (loosely).
+function tensionPrior(sideKey) {
+  const w = state.wheel;
+  const st = sideStats(w, sideKey);
+  if (st.n >= 3) return { T: st.median, weight: st.n >= 6 ? 20 : 14 };
+  const tgt = w.sides[sideKey].targetKgf;
+  if (tgt) return { T: tgt * G, weight: 14 };
+  const so = sideStats(w, sideKey === 'R' ? 'L' : 'R');
+  if (so.n >= 3) return { T: so.median * sideRatio(w, sideKey), weight: 8 };
+  return null;
 }
+function expectedT(sideKey) { return tensionPrior(sideKey)?.T ?? null; }
 
 // --- Audio ---------------------------------------------------------------------------
 
@@ -326,7 +374,10 @@ function processPluck(x, fs, preSamples, isDemo) {
   const sideKey = activeSideKey();
   const side = state.wheel.sides[sideKey];
   const model = modelFor(side);
-  const res = analyzePluck(x, fs, { model, preSamples, expectedT: expectedT(sideKey) });
+  // The prior is in calibrated readings; the analysis works before calibration.
+  const prior = tensionPrior(sideKey);
+  const k = calibFactor(side.spokeId);
+  const res = analyzePluck(x, fs, { model, preSamples, expectedT: prior ? prior.T / k : null, priorWeight: prior?.weight });
   if (!res || !res.best) {
     setStatus('No clear ring in that pluck. Pluck a bit firmer, or bring the phone closer.', 'warn');
     return;
@@ -369,18 +420,28 @@ function recordPluck(c, confidence, manual = false) {
   const need = +state.settings.plucksNeeded;
   // Find `need` recent plucks that agree within 2.5 %.
   const recent = r.plucks.slice(-Math.max(need, 3));
-  let agreeing = null;
-  for (let i = 0; i < recent.length && !agreeing; i++) {
+  const groups = [];
+  for (let i = 0; i < recent.length; i++) {
     const grp = recent.filter((q) => Math.abs(q.T / recent[i].T - 1) < 0.025);
-    if (grp.length >= need) agreeing = grp;
+    if (grp.length >= need) groups.push(grp);
   }
+  // Two sets that each agree (the spoke and, say, its crossed pair): keep the
+  // one nearer this side's tension; with nothing to go on, the larger set.
+  const sk = holeSide(w, h);
+  const prior = tensionPrior(sk);
+  const misfit = (g) => (prior ? Math.abs(Math.log(median(g.map((q) => q.T)) / prior.T)) : -g.length);
+  const agreeing = groups.sort((a, b) => misfit(a) - misfit(b))[0] ?? null;
   r.T = agreeing ? median(agreeing.map((q) => q.T)) : median(r.plucks.map((q) => q.T));
   r.f = agreeing ? median(agreeing.map((q) => q.f)) : p.f;
   r.at = Date.now();
   r.done = !!agreeing;
   w.readings[h] = r;
   saveAll();
-  if (agreeing) {
+  if (agreeing && suspectHoles(w, sk).has(h)) {
+    // Far from the rest of the side: stay on this spoke for another try.
+    const st = sideStats(w, sk);
+    setStatus(`Spoke ${h} reads ${fmtT(r.T)} ${state.unit}, far ${r.T < st.median ? 'below' : 'above'} the rest of this side (median ${fmtT(st.median)}). That usually means another tone was picked up. Rest a finger on the spoke it crosses and pluck again, or tap a peak below; move on if it really is that ${r.T < st.median ? 'loose' : 'tight'}.`, 'warn');
+  } else if (agreeing) {
     toast(`Spoke ${h}: ${fmtT(r.T)} ${state.unit}`);
     advance(1);
   } else {
@@ -717,12 +778,14 @@ function renderWheel() {
   $('dlCsv').hidden = inFrame;
   const fig = $('wheelFig');
   const cx = 200, cy = 200, rRim = 178, rHub = 26;
-  const vals = Object.values(w.readings).map((r) => r.T);
+  const stats = { R: sideStats(w, 'R'), L: sideStats(w, 'L') };
+  // Readings to re-check stay off the scale, the averages and the outline.
+  const isSus = (h) => stats[holeSide(w, h)].suspect.has(h);
+  const vals = Object.entries(w.readings).filter(([h]) => !isSus(+h)).map(([, r]) => r.T);
   const tMaxK = Math.max(60, Math.ceil(((vals.length ? Math.max(...vals) : 120 * G) / G * 1.12) / 20) * 20);
-  const rOf = (TN) => rHub + 8 + (TN / G / tMaxK) * (rRim - rHub - 14);
+  const rOf = (TN) => Math.min(rRim - 12, rHub + 8 + (TN / G / tMaxK) * (rRim - rHub - 14));
   const ang = (h) => -Math.PI / 2 + (h - 0.5) * 2 * Math.PI / w.count;
   const P = (h, rad) => [cx + rad * Math.cos(ang(h)), cy + rad * Math.sin(ang(h))];
-  const stats = { R: sideStats(w, 'R'), L: sideStats(w, 'L') };
   let s = '';
   // Rings in the display unit.
   const unitF = UNIT[state.unit].f;
@@ -765,7 +828,7 @@ function renderWheel() {
   }
   for (const sk of ['R', 'L']) {
     const pts = [];
-    for (let h = 1; h <= w.count; h++) if (holeSide(w, h) === sk && w.readings[h]) pts.push(P(h, rOf(w.readings[h].T)));
+    for (let h = 1; h <= w.count; h++) if (holeSide(w, h) === sk && w.readings[h] && !isSus(h)) pts.push(P(h, rOf(w.readings[h].T)));
     if (pts.length > 2) s += `<polygon points="${pts.map((p) => p.map((v) => v.toFixed(1)).join(',')).join(' ')}" fill="none" stroke="var(--${sk === 'R' ? 'accent' : 'left'})" stroke-width="1.8" stroke-linejoin="round"${sk === 'L' ? ' stroke-dasharray="6 4"' : ''}/>`;
   }
   const hits = [];
@@ -775,9 +838,15 @@ function renderWheel() {
     const cur = h === w.current;
     if (cur) { const [x, y] = P(h, rRim - 2); s += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="5" fill="var(--ink)"/>`; }
     if (!r) continue;
+    const [x, y] = P(h, rOf(r.T));
+    if (isSus(h)) {
+      s += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="9" fill="var(--panel)" stroke="var(--bad)" stroke-width="2" stroke-dasharray="3 2"/><text x="${x.toFixed(1)}" y="${(y + 4.5).toFixed(1)}" font-size="13" font-weight="700" text-anchor="middle" fill="var(--bad)">?</text>`;
+      if (cur) s += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="13" fill="none" stroke="var(--ink)" stroke-width="1.5"/>`;
+      hits.push(`<circle data-hole="${h}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="16" fill="rgba(0,0,0,0)" style="cursor:pointer"><title>Spoke ${h}: ${fmtT(r.T)} ${state.unit}, re-check</title></circle>`);
+      continue;
+    }
     const dev = r.T / stats[sk].mean - 1;
     const cls = devClass(dev);
-    const [x, y] = P(h, rOf(r.T));
     // Deviation is carried by size and outline too, not colour alone.
     const rad = cls === 'good' ? 4.5 : cls === 'warn' ? 6.5 : 8;
     const edge = cls === 'bad' ? 'stroke="var(--ink)" stroke-width="2"' : 'stroke="var(--panel)" stroke-width="1.5"';
@@ -788,7 +857,7 @@ function renderWheel() {
   // Generous invisible tap areas on top of the dots.
   s += hits.join('');
   fig.innerHTML = s;
-  $('wheelLegend').innerHTML = `<span class="side-dot R"></span>Right side, solid line. <span class="side-dot L"></span>Left side, dashed line. Dotted rings mark each side's average; rings are labelled in ${state.unit}. Dots show each spoke's distance from its side's average: small and green within 10%, larger and amber within 20%, largest, red and outlined beyond that. ${prevRound(w) ? 'The faint dotted outline is the previous round. ' : ''}Tap a dot or a table row to re-measure that spoke.`;
+  $('wheelLegend').innerHTML = `<span class="side-dot R"></span>Right side, solid line. <span class="side-dot L"></span>Left side, dashed line. Dotted rings mark each side's average; rings are labelled in ${state.unit}. Dots show each spoke's distance from its side's average: small and green within 10%, larger and amber within 20%, largest, red and outlined beyond that. ${stats.R.suspect.size + stats.L.suspect.size ? 'A dashed circle with a question mark is a reading to re-check, left out of the averages. ' : ''}${prevRound(w) ? 'The faint dotted outline is the previous round. ' : ''}Tap a dot or a table row to re-measure that spoke.`;
 
   // Stats.
   const sb = $('stats');
@@ -800,7 +869,7 @@ function renderWheel() {
     const cls = !st.n ? '' : st.out20 ? 'bad' : st.out10 ? 'warn' : 'good';
     el.innerHTML = `<div class="k"><span class="side-dot ${sk}"></span><b class="small">${sideName(w, sk)}</b></div>
       ${st.n ? `<div><span class="data" style="font-size:22px;font-weight:600">${fmtT(st.mean)}</span> <span class="muted small">${state.unit} avg</span></div>
-      <dl><dt>Measured</dt><dd>${st.n}/${st.total}</dd><dt>Range</dt><dd>${fmtT(st.min)}–${fmtT(st.max)}</dd>
+      <dl><dt>Measured</dt><dd>${st.n + st.suspect.size}/${st.total}</dd>${st.suspect.size ? `<dt>To re-check</dt><dd>${st.suspect.size}</dd>` : ''}<dt>Range</dt><dd>${fmtT(st.min)}–${fmtT(st.max)}</dd>
       <dt>Std dev</dt><dd>${(st.sd / st.mean * 100).toFixed(1)}%</dd><dt>Beyond ±10%</dt><dd>${st.out10}</dd>
       ${st.overtone ? `<dt>Overtone check</dt><dd>${st.overtone.gap >= 0 ? '+' : '−'}${Math.abs(st.overtone.gap * 100).toFixed(1)}% (${st.overtone.n})</dd>` : ''}
       ${roundChange(w, sk) ? `<dt>Avg change</dt><dd>${roundChange(w, sk)}</dd>` : ''}</dl>
@@ -818,17 +887,29 @@ function renderWheel() {
   const tb = $('spokeTable');
   const prevR = prevRound(w);
   let t = `<thead><tr><th>Spoke</th><th>Side</th><th>${state.unit}</th><th>vs avg</th>${prevR ? '<th>Δ round</th>' : ''}<th>Hz</th></tr></thead><tbody>`;
+  const pairs = [];
   for (const h of orderList(w)) {
     const r = w.readings[h];
     const sk = holeSide(w, h);
-    const dev = r ? r.T / stats[sk].mean - 1 : null;
-    t += `<tr data-hole="${h}" class="${h === w.current ? 'sel' : ''}"><td>${h}</td><td><span class="side-dot ${sk}"></span>${sk}</td><td>${r ? fmtT(r.T) : '—'}</td>
-      <td class="dev ${dev == null ? '' : devClass(dev)}">${dev == null ? '' : (dev >= 0 ? '+' : '−') + Math.abs(dev * 100).toFixed(1) + '%'}</td>${prevR ? `<td>${r && prevR.readings[h] ? signed(r.T - prevR.readings[h].T) : ''}</td>` : ''}<td>${r && r.f ? r.f.toFixed(0) : ''}</td></tr>`;
+    const sus = r && isSus(h);
+    const dev = r && !sus ? r.T / stats[sk].mean - 1 : null;
+    const pm = partnerMatch(w, h);
+    if (pm && !pairs.some(([a, b]) => a === pm && b === h)) pairs.push([h, pm]);
+    t += `<tr data-hole="${h}" class="${h === w.current ? 'sel' : ''}"><td>${h}${pm ? '<sup>≈</sup>' : ''}</td><td><span class="side-dot ${sk}"></span>${sk}</td><td>${r ? fmtT(r.T) : '—'}</td>
+      <td class="dev ${sus ? 'bad' : dev == null ? '' : devClass(dev)}">${sus ? 'Re-check' : dev == null ? '' : (dev >= 0 ? '+' : '−') + Math.abs(dev * 100).toFixed(1) + '%'}</td>${prevR ? `<td>${r && prevR.readings[h] ? signed(r.T - prevR.readings[h].T) : ''}</td>` : ''}<td>${r && r.f ? r.f.toFixed(0) : ''}</td></tr>`;
   }
   tb.innerHTML = t + '</tbody>';
+  const notes = [];
+  const susList = [...stats.R.suspect, ...stats.L.suspect].sort((a, b) => a - b);
+  if (susList.length) notes.push(`<b>Re-check</b> ${listHoles(susList)}: more than 1.6× off the rest of ${susList.length > 1 ? 'their side' : 'its side'}, which usually means an overtone or the crossed pair's lower tone was picked up. ${susList.length > 1 ? 'They are' : 'It is'} left out of the averages and the plan.`);
+  if (pairs.length) notes.push(`<b>≈</b> ${pairs.map(([a, b]) => `${Math.min(a, b)} &amp; ${Math.max(a, b)}`).join(', ')} read the same pitch to within 0.15%. Crossed partners often ring as one, so each reads nearer their average. Rest a finger on the partner near the cross and re-measure to read each on its own.`);
+  $('tableNote').innerHTML = notes.map((n) => `<p>${n}</p>`).join('');
+  $('tableNote').hidden = !notes.length;
   renderPlan(w, stats);
   renderSaved();
 }
+
+function listHoles(hs) { return hs.length > 1 ? `spokes ${hs.slice(0, -1).join(', ')} and ${hs[hs.length - 1]}` : `spoke ${hs[0]}`; }
 
 function signed(N) { const v = N * UNIT[state.unit].f; return `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(state.unit === 'N' ? 0 : 1)}`; }
 
@@ -836,7 +917,8 @@ function roundChange(w, sk) {
   const prev = prevRound(w);
   if (!prev) return '';
   const d = [];
-  for (const [h, r] of Object.entries(w.readings)) if (holeSide(w, +h) === sk && prev.readings[h]) d.push(r.T - prev.readings[h].T);
+  const sus = suspectHoles(w, sk);
+  for (const [h, r] of Object.entries(w.readings)) if (holeSide(w, +h) === sk && prev.readings[h] && !sus.has(+h)) d.push(r.T - prev.readings[h].T);
   return d.length ? signed(d.reduce((a, b) => a + b, 0) / d.length) : '';
 }
 
@@ -850,9 +932,14 @@ function renderPlan(w, stats) {
     const side = w.sides[sk];
     const gain = sideGain(side);
     const tensions = {};
-    for (const [h, r] of Object.entries(w.readings)) if (holeSide(w, +h) === sk) tensions[h] = r.T;
+    const sus = stats[sk].suspect;
+    for (const [h, r] of Object.entries(w.readings)) if (holeSide(w, +h) === sk && !sus.has(+h)) tensions[h] = r.T;
     const plan = balancingPlan({ tensions, neighbours: (h) => sameSideNeighbours(w, h), gain, joint: jointHoles(w) });
-    if (plan.target == null) continue;
+    const recheck = sus.size ? `<p class="small">Re-measure ${listHoles([...sus].sort((a, b) => a - b))} first; ${sus.size > 1 ? 'their readings are' : 'its reading is'} too far off to act on.</p>` : '';
+    if (plan.target == null) {
+      if (recheck) parts.push(`<div class="plan-side"><h3><span class="side-dot ${sk}"></span>${sideName(w, sk)}</h3>${recheck}</div>`);
+      continue;
+    }
     const lines = plan.steps.map((st) => {
       any = true;
       const verb = st.turns > 0 ? 'Tighten' : 'Loosen';
@@ -869,7 +956,7 @@ function renderPlan(w, stats) {
     });
     parts.push(`<div class="plan-side"><h3><span class="side-dot ${sk}"></span>${sideName(w, sk)}</h3>
       <p class="footnote">Median ${fmtT(plan.target)} ${state.unit}. One full turn ≈ ${fmtT(gain)} ${state.unit} on this spoke (${side.turnGainKgf > 0 ? 'your figure' : 'estimated'}).</p>
-      ${lines.length ? `<ul class="plan">${lines.join('')}</ul>` : '<p class="small">Every measured spoke is within 5% of the median. Nothing to balance.</p>'}</div>`);
+      ${recheck}${lines.length ? `<ul class="plan">${lines.join('')}</ul>` : `<p class="small">Every ${sus.size ? 'other ' : ''}measured spoke is within 5% of the median. Nothing to balance.</p>`}</div>`);
   }
   box.innerHTML = parts.length ? parts.join('') : '<p class="small muted">Measure at least four spokes on a side to get a plan.</p>';
   $('planNote').hidden = !any;
@@ -907,15 +994,18 @@ $('spokeTable').addEventListener('click', (e) => { const h = e.target.closest('t
 function csv() {
   const w = state.wheel;
   const prev = prevRound(w);
-  const rows = [['spoke', 'side', 'tension_kgf', 'tension_N', 'frequency_Hz', 'plucks', 'overtone_check_kgf', 'pitch_glide_pct', 'previous_round_kgf', 'spoke_type', 'free_length_mm', 'spoke_length_mm']];
+  const rows = [['spoke', 'side', 'tension_kgf', 'tension_N', 'frequency_Hz', 'plucks', 'overtone_check_kgf', 'pitch_glide_pct', 'previous_round_kgf', 'spoke_type', 'free_length_mm', 'spoke_length_mm', 'note']];
+  const sus = { R: suspectHoles(w, 'R'), L: suspectHoles(w, 'L') };
   for (const h of orderList(w)) {
     const r = w.readings[h];
     const sk = holeSide(w, h);
     const side = w.sides[sk];
+    const pm = r ? partnerMatch(w, h) : null;
+    const note = [sus[sk].has(h) ? 're-check' : '', pm ? `same pitch as ${pm}` : ''].filter(Boolean).join('; ');
     const ov = r ? r.plucks.map((p) => p.To).filter((v) => v) : [];
     const gl = r ? r.plucks.map((p) => p.glide).filter((v) => v != null) : [];
     rows.push([h, sk, r ? (r.T / G).toFixed(1) : '', r ? r.T.toFixed(0) : '', r?.f ? r.f.toFixed(2) : '', r ? r.plucks.map((p) => (p.T / G).toFixed(1)).join(' ') : '',
-      ov.length ? (median(ov) / G).toFixed(1) : '', gl.length ? (median(gl) * 100).toFixed(2) : '', prev?.readings[h] ? (prev.readings[h].T / G).toFixed(1) : '', spokeLabel(spokeById(side.spokeId)), side.lengthMm, side.spokeLenMm ?? '']);
+      ov.length ? (median(ov) / G).toFixed(1) : '', gl.length ? (median(gl) * 100).toFixed(2) : '', prev?.readings[h] ? (prev.readings[h].T / G).toFixed(1) : '', spokeLabel(spokeById(side.spokeId)), side.lengthMm, side.spokeLenMm ?? '', note]);
   }
   return rows.map((r) => r.map((v) => /[",\s]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(',')).join('\n');
 }
@@ -1183,7 +1273,7 @@ function renderAbout() {
       <li><b>It identifies the right peak.</b> A plucked spoke in a wheel also excites the spoke it crosses and the pair as a whole. Each candidate is checked for its overtone fingerprint (a stiff spoke's overtones sit slightly sharp of whole multiples), how long it rings, and how far it stands above the room noise. When two peaks are close calls, it says so, and you can tap the right one.</li>
       <li><b>It corrects for how hard you pluck.</b> A firm pluck stretches the spoke and raises its pitch until the ring dies down; a 2 mm pluck can read 5% high. The app follows the pitch as the ring decays and works back to what it would be at zero amplitude.</li>
       <li><b>It splits modes the FFT can't.</b> A bladed spoke rings in two planes less than 1% apart, and a round one held differently in each direction by the cross can too. Those merge into one FFT peak and bias it, so each leading peak is re-fitted with the matrix pencil method, which separates them; for bladed spokes the flat-face mode is used.</li>
-      <li><b>It cross-checks with the overtones.</b> A stiff spoke's overtones sit slightly sharp of whole multiples, by an amount that depends on tension but hardly at all on how the ends are held. That gives a second, independent estimate, shown under each reading as the overtone check. A steady gap between the two points to the free length or to the end conditions.</li>
+      <li><b>It cross-checks with the overtones.</b> A stiff spoke's overtones sit slightly sharp of whole multiples, by an amount that depends on tension but hardly at all on how the ends are held. That gives a second, independent estimate, shown under each reading as the overtone check when the 2nd and 3rd overtones agree with each other. A steady gap between the two points to the free length or to the end conditions. On the first real wheel mapped with it, the check matched the main reading to about 2% on the slack side, but scattered widely on the tight side, where the overtones crowd in with those of the partner spoke; treat it as a hint, not a second gauge.</li>
       <li><b>It reports uncertainty.</b> Every reading shows an estimated absolute error and, while mapping a wheel, waits for plucks that agree.</li>
     </ul>
     <h3>Checked against a load cell</h3>
@@ -1196,7 +1286,7 @@ function renderAbout() {
     <h3>Getting good readings</h3>
     <ul>
       <li>Measure the free length carefully. Tension goes with length squared, so a 2 mm error on a 200 mm segment is about 2% in tension. The geometry calculator in Setup gives the length if you know the ERD and hub dimensions.</li>
-      <li>Rest a fingertip on the spoke it crosses, near the cross. This damps the partner spoke and makes the crossing behave like a fixed point.</li>
+      <li>Rest a fingertip on the spoke it crosses, near the cross. This damps the partner spoke and makes the crossing behave like a fixed point. It matters most on the slack side of a dished wheel, where an undamped pair readily rings as one.</li>
       <li>Pluck sideways and lightly, about a quarter of the way along the free length from the nipple (roughly 5 cm), with a fingernail or a plastic pick. Light plucks need less correction, and plucking there rings both overtones the cross-check uses; plucking dead centre or a third of the way along silences one of them. For bladed spokes, pluck across the flat face.</li>
       <li>Hold the phone 10–20 cm away, bottom edge (the microphone) toward the spoke, in a quiet room.</li>
       <li>Take the tire off or let it down. An inflated tire squeezes the rim and lowers every spoke's tension; Brandt's figures for a 25 mm tubular at 8 bar work out to about 7 kgf less per spoke on a 36-spoke wheel.</li>
@@ -1219,6 +1309,7 @@ function renderAbout() {
     <h3>What is still uncertain</h3>
     <p>The crossing. The model treats it as a pin, but two effects pull in opposite directions. The spoke runs on past the cross to the hub, and that short span resists rotation, which raises the pitch about 3–4%. The crossing spoke is itself springy, which lowers it by a similar amount or more. Bridge engineers measuring cable tension hit the same wall: frequencies alone reveal only the combined effect of both ends, never each end separately. The overtone check is the tool for this. It barely depends on the ends, so on a real wheel its average gap from the main reading (shown per side on the Wheel tab) measures how your nipples and crossings actually behave.</p>
     <p>Two crossing spokes also ring together. When they're pressed into each other they form pairs of modes, one with the crossing still and one with both spokes swinging together at a lower pitch, about three quarters of the main one. A finger on the partner spoke damps the pair and stops it pulling the reading toward its own pitch.</p>
+    <p>A real wheel showed both effects. On the slack side, a few plucks rang loudest at the pair's lower tone, which reads about 0.6× the true tension, and a few at the second overtone, which reads 4× or more. On the tight side, crossed partners read the same pitch to within 0.07% while other neighbours differed by 2–6%: each pair was ringing as one, and each reading lands nearer the pair's average than the spoke's own tension. The app now leans on the side's typical tension to choose peaks, leaves readings more than 1.6× off out of the averages and the plan until they're re-measured, and marks partners that match.</p>
     <h3>Background</h3>
     <ul>
       <li>Douglas Pepelko's <i>Spoke Tension Gauge</i> (iOS, 2012–2016) pioneered this on phones; its Android sibling is <a href="https://www.mega-mouse.net/" target="_blank" rel="noopener">Spoke Tensioner</a>.</li>

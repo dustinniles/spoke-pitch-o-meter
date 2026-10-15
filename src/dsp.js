@@ -272,7 +272,7 @@ export function fitGlide(glide, f) {
 // Analyse one pluck. `x` holds audio starting `preSamples` before the onset.
 // `model` (SpokeModel) turns frequencies into tensions and predicts overtones.
 // `expectedT` (N) optionally nudges ambiguous picks toward the wheel's level.
-export function analyzePluck(x, fs, { model = null, preSamples = 0, expectedT = null, tMinKgf = 15, tMaxKgf = 320 } = {}) {
+export function analyzePluck(x, fs, { model = null, preSamples = 0, expectedT = null, priorWeight = 14, tMinKgf = 20, tMaxKgf = 220 } = {}) {
   const G = 9.80665;
   const a = preSamples + Math.round(ANALYSIS.skip * fs);
   const mainLen = Math.min(Math.round(ANALYSIS.window * fs), x.length - a);
@@ -321,10 +321,22 @@ export function analyzePluck(x, fs, { model = null, preSamples = 0, expectedT = 
         if (h) { found++; harm += Math.min(h.prom, 25) * 0.5; }
       });
       c.harmonics = found;
-      // If this peak is itself an overtone of a lower candidate, demote it.
-      const r2 = ratios[0];
-      const lower = inBand.find((q) => Math.abs(q.f * r2 - p.f) / p.f < 0.012 && q.level > p.level - 18);
-      if (lower) { c.score -= 12; c.notes.push('overtone of lower peak'); }
+      // If this peak is the 2nd or 3rd partial of a lower peak, demote it hard.
+      // Predict each lower peak's partials from that peak's own tension: at
+      // low tension the ratios run well above 2 and 3, so predicting them from
+      // this candidate's (wrong, high) tension misses (seen on a real wheel).
+      // With a tension prior, skip lower peaks that fit this side worse than
+      // the candidate does: on the tight side of a dished wheel the slack
+      // side's crossed-pair tone can sit right where a "parent" would be.
+      const misfit = (T) => (expectedT ? Math.abs(Math.log(T / expectedT)) : 0);
+      const parent = allPeaks.find((q) => {
+        if (q.f >= p.f * 0.9 || q.f < 60 || q.level < p.level - 25 || q.prom < 8) return false;
+        const Tq = model.tensionAt(q.f, 'thin');
+        if (misfit(Tq) > misfit(c.T) + 0.4) return false;
+        const rq = model.ratiosAt(Tq, 'thin');
+        return rq.some((r) => Math.abs(q.f * r / p.f - 1) < 0.02);
+      });
+      if (parent) { c.score -= 25; c.notes.push('overtone of a lower peak'); }
       // Bladed spokes ring in two planes; the sideways (thin) mode is the lower one.
       if (pols.includes('wide')) {
         const split = model.freqAt(c.T, 'wide') / p.f;
@@ -334,7 +346,7 @@ export function analyzePluck(x, fs, { model = null, preSamples = 0, expectedT = 
         if (partnerBelow) { c.score -= 8; c.pol = 'wide'; c.notes.push('edge-on mode'); }
       }
       c.score += harm;
-      if (expectedT) c.score -= 14 * Math.abs(Math.log(c.T / expectedT));
+      if (expectedT) c.score -= priorWeight * Math.abs(Math.log(c.T / expectedT));
     }
     c.score += Math.min(c.prom, 40) + 0.6 * Math.max(-30, c.rel) + 0.5 * Math.min(Math.max(c.sustain, -10), 25) + 0.3 * Math.min(c.snr, 40);
     return c;
@@ -403,12 +415,12 @@ export function analyzePluck(x, fs, { model = null, preSamples = 0, expectedT = 
         const h = allPeaks.filter((q) => Math.abs(q.f / (f1 * r) - 1) < 0.012 && q.prom >= 10).sort((p, q) => q.level - p.level)[0];
         if (h) est.push({ mode: i + 2, T: model.tensionFromRatio(h.f / f1, i + 1, pol), level: h.level });
       });
-      if (est.length) {
-        // Prefer the 3rd partial: its ratio is the most sensitive to tension,
-        // and tension modulation puts a phantom component at exactly 2·f1
-        // close to the 2nd (Legge & Fletcher 1984; Bank & Sujbert 2005).
-        est.sort((p, q) => (q.mode === 3) - (p.mode === 3) || q.level - p.level);
-        c.overtone = { T: est[0].T, mode: est[0].mode, all: est };
+      // Report only when the 2nd and 3rd partials agree. On a real wheel the
+      // overtone region is crowded (partner spokes, the hub-side span), and a
+      // single partial gave estimates scattered by ±40 % at high tension.
+      const m2 = est.find((e) => e.mode === 2), m3 = est.find((e) => e.mode === 3);
+      if (m2 && m3 && Math.abs(m2.T / m3.T - 1) < 0.06) {
+        c.overtone = { T: Math.sqrt(m2.T * m3.T), mode: 23, all: est };
       }
     }
   }

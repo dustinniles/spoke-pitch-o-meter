@@ -198,6 +198,8 @@ p { margin: 0; }
 .row > .btn { flex: 1 1 auto; }
 .filebtn:has(+ input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .footnote { font-size: var(--t-footnote); color: var(--muted); }
+.tablenote p { margin: 0.5em 0 0; }
+#spokeTable sup { font-size: 1em; line-height: 0; color: var(--muted); }
 
 /* Panels and forms */
 .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
@@ -376,6 +378,7 @@ ul.plan li { font-size: var(--t-subhead); }
       <p class="footnote" id="planNote" hidden>After Jobst Brandt: move an odd spoke toward its side's median and give its two same-side neighbours half the opposite turn, so the rim stays where it is. Turn past the mark by about a quarter and back off, so no wind-up is left in the spoke. Then check truing, and measure again in the next round.</p>
     </div>
     <div class="tablewrap"><table id="spokeTable"></table></div>
+    <div class="footnote tablenote" id="tableNote" hidden></div>
     <div class="row">
       <button type="button" class="btn" id="copyCsv">Copy CSV</button>
       <button type="button" class="btn" id="dlCsv" hidden>Download CSV</button>

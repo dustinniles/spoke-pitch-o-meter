@@ -161,3 +161,58 @@ test('a bladed spoke’s flat-face mode is chosen over a louder edge-on twin', (
   const res = analyzePluck(x, fs, { model: bm, preSamples: Math.round(pre * fs) });
   assert.ok(Math.abs(res.best.T / G - 105) < 0.5, `got ${(res.best.T / G).toFixed(2)} kgf; split ${((fWide / fThin - 1) * 100).toFixed(2)} %`);
 });
+
+// Real-wheel failure modes (left side of a DT Competition rear, 210 mm free).
+const lowModel = buildSpokeModel({ spoke: { dThread: 2.0, dHead: 2.0, mid: { d: 1.8 }, threadButt: 5, headButt: 40, taper: 8, massFactor: 1.035 }, lengthMm: 210 });
+// `sharp` puts the overtones a little above the model's ratios, as a
+// compliant crossing does on a real wheel; `a3` = 0 drops the 3rd partial.
+function lowSidePluck({ tKgf = 40, a1 = 0.15, a2 = 0.2, a3 = 0.05, sharp = 0, pairAmp = 0, seed = 21 }) {
+  const T = tKgf * G, f1 = lowModel.freqAt(T), r = lowModel.ratiosAt(T);
+  const pre = 0.15;
+  const partials = [{ f: f1, amp: a1, decay: 3 }, { f: f1 * r[0] * (1 + sharp), amp: a2, decay: 4 }];
+  if (a3) partials.push({ f: f1 * r[1] * (1 + sharp), amp: a3, decay: 6 });
+  // The crossed pair swinging together: about 0.76 × the segment's pitch.
+  if (pairAmp) partials.push({ f: f1 * 0.76, amp: pairAmp, decay: 2.5 }, { f: f1 * 0.76 * 2.02, amp: pairAmp * 0.3, decay: 4 });
+  const { x } = synthPluck({ fs, dur: 0.85, pre, seed, partials, noise: 0.002 });
+  return { x, pre: Math.round(pre * fs) };
+}
+
+// A real wheel read 205, 173 and 295 kgf on slack-side spokes near 30–60 kgf:
+// the 2nd partial, which the earlier check missed because it predicted the
+// partial from the wrong (high) tension and needed the overtones to sit
+// exactly on the model's ratios.
+test('a loud second overtone on a slack spoke is not taken for the fundamental', () => {
+  for (const tKgf of [32, 40, 60]) {
+    for (const opts of [{ a1: 0.12 }, { a1: 0.06, sharp: 0.015 }, { a1: 0.06, a3: 0 }]) {
+      const { x, pre } = lowSidePluck({ tKgf, a2: 0.2, ...opts });
+      const r = analyzePluck(x, fs, { model: lowModel, preSamples: pre });
+      assert.ok(Math.abs(r.best.T / G - tKgf) < 0.6, `${tKgf} kgf ${JSON.stringify(opts)}: got ${(r.best.T / G).toFixed(1)}`);
+    }
+  }
+});
+
+test('the slack side’s pair tone does not demote a tight-side spoke', () => {
+  const m = buildSpokeModel({ spoke: { dThread: 2.0, dHead: 2.0, mid: { d: 1.8 }, threadButt: 5, headButt: 40, taper: 8, massFactor: 1.035 }, lengthMm: 205 });
+  const T = 135 * G, f1 = m.freqAt(T), r = m.ratiosAt(T);
+  // A lower peak placed exactly where this spoke's "fundamental" would be if
+  // it were a 2nd partial.
+  let q = f1 / 2.2;
+  for (let i = 0; i < 20; i++) q = f1 / m.ratiosAt(m.tensionAt(q))[0];
+  const { x } = synthPluck({ fs, dur: 0.85, pre: 0.15, seed: 4, noise: 0.002, partials: [
+    { f: f1, amp: 0.2, decay: 3 }, { f: f1 * r[0], amp: 0.06, decay: 5 }, { f: f1 * r[1], amp: 0.03, decay: 7 }],
+    extra: [{ f: q, amp: 0.1, decay: 2.5 }] });
+  const res = analyzePluck(x, fs, { model: m, preSamples: Math.round(0.15 * fs), expectedT: 125 * G, priorWeight: 20 });
+  assert.ok(Math.abs(res.best.T / G - 135) < 1.5, `got ${(res.best.T / G).toFixed(1)}`);
+});
+
+test('the crossed-pair mode loses once the side’s tension is known', () => {
+  const { x, pre } = lowSidePluck({ tKgf: 40, a1: 0.12, a2: 0.1, pairAmp: 0.16 });
+  const r = analyzePluck(x, fs, { model: lowModel, preSamples: pre, expectedT: 42 * G, priorWeight: 20 });
+  assert.ok(Math.abs(r.best.T / G - 40) < 0.6, `got ${(r.best.T / G).toFixed(1)}`);
+});
+
+test('nothing above 220 kgf is offered as a reading', () => {
+  const { x, pre } = lowSidePluck({ tKgf: 60, a1: 0.05, a2: 0.25 });
+  const r = analyzePluck(x, fs, { model: lowModel, preSamples: pre });
+  assert.ok(r.candidates.every((c) => c.T / G <= 225), r.candidates.map((c) => (c.T / G).toFixed(0)).join(' '));
+});

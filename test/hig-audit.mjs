@@ -3,14 +3,16 @@
 // sideways scrolling, at iPhone SE and standard iPhone widths, in both themes
 // and at a large Dynamic Type size.
 //   node test/hig-audit.mjs [screenshot dir]
+// WHEEL=path/to/wheel.json audits with that wheel open instead of the example.
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const require = createRequire('/opt/node22/lib/node_modules/');
 const { chromium } = require('playwright');
 const shots = process.argv[2];
+const wheel = process.env.WHEEL ? JSON.parse(readFileSync(process.env.WHEEL, 'utf8')) : null;
 if (shots) mkdirSync(shots, { recursive: true });
 
 // Own process group, so the whole server tree goes away afterwards.
@@ -64,6 +66,12 @@ for (const [vw, vh, name] of [[375, 667, 'iPhone SE'], [390, 844, 'iPhone']]) {
   for (const scheme of ['light', 'dark']) {
     for (const textScale of ['default', 'large']) {
       const ctx = await browser.newContext({ viewport: { width: vw, height: vh }, deviceScaleFactor: 2, colorScheme: scheme });
+      if (wheel) {
+        await ctx.addInitScript((w) => {
+          localStorage.setItem('pitchometer:wheels', JSON.stringify([w]));
+          localStorage.setItem('pitchometer:currentWheel', JSON.stringify(w.id));
+        }, wheel);
+      }
       const page = await ctx.newPage();
       await page.goto(`http://localhost:${port}/index.html`);
       // Large Dynamic Type: Body at 23 pt (the largest non-accessibility size).
