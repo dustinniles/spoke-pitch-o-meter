@@ -245,11 +245,19 @@ tr[data-hole] { cursor: pointer; }
 .dev.good { color: var(--good); } .dev.warn { color: var(--warn); } .dev.bad { color: var(--bad); }
 .banner { border: 1px dashed var(--rule); border-radius: var(--radius); padding: 10px 12px; font-size: var(--t-footnote); display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .saved-row { padding: 6px 0; }
+.plan-side { display: flex; flex-direction: column; gap: 6px; }
+.plan-side + .plan-side { border-top: 1px solid var(--rule); padding-top: 12px; }
+ul.plan { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+ul.plan li { font-size: var(--t-subhead); }
+.planspoke {
+  min-height: var(--tap); padding: 4px 10px; margin-right: 4px; border: 1px solid var(--rule); border-radius: 8px;
+  background: var(--bg); font-family: var(--font-data); font-size: var(--t-subhead); font-weight: 600; cursor: pointer;
+}
 
 /* Prose (About) */
 .prose { display: flex; flex-direction: column; gap: 10px; max-width: 65ch; }
 .prose p, .prose li { font-size: var(--t-body); }
-.prose ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.prose ul, .prose ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 .prose a { color: var(--accent); }
 .formula { font-family: var(--font-data); font-size: var(--t-footnote); background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
 
@@ -357,13 +365,21 @@ tr[data-hole] { cursor: pointer; }
         <button type="button" class="btn" id="measureBtn">Measure</button>
       </div>
     </div>
+    <p class="footnote" id="roundLabel" hidden></p>
+    <p class="footnote">For a fair map, measure with the tire off or deflated, after stress relieving, with each nipple backed off from any wind-up.</p>
     <svg class="wheelfig" id="wheelFig" viewBox="0 0 400 400" role="img" aria-label="Tension of each spoke around the wheel"></svg>
     <p class="footnote" id="wheelLegend"></p>
     <div class="stats" id="stats"></div>
+    <div class="panel" id="planPanel">
+      <h3>Balancing plan</h3>
+      <div id="planBody"></div>
+      <p class="footnote" id="planNote" hidden>After Jobst Brandt: move an odd spoke toward its side's median and give its two same-side neighbours half the opposite turn, so the rim stays where it is. Turn past the mark by about a quarter and back off, so no wind-up is left in the spoke. Then check truing, and measure again in the next round.</p>
+    </div>
     <div class="tablewrap"><table id="spokeTable"></table></div>
     <div class="row">
       <button type="button" class="btn" id="copyCsv">Copy CSV</button>
       <button type="button" class="btn" id="dlCsv" hidden>Download CSV</button>
+      <button type="button" class="btn" id="nextRoundBtn">Start next round</button>
       <button type="button" class="btn" id="newWheelBtn">New wheel</button>
     </div>
     <div class="panel" id="savedPanel">

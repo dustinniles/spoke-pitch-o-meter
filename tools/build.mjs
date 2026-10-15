@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const src = (f) => readFileSync(join(root, 'src', f), 'utf8');
 
-const order = ['physics.js', 'pencil.js', 'dsp.js', 'geometry.js', 'spokes.js', 'app.js'];
+const order = ['physics.js', 'pencil.js', 'dsp.js', 'geometry.js', 'spokes.js', 'build.js', 'app.js'];
 const body = order.map((f) => {
   const code = src(f)
     .replace(/^import .*$/gm, '')

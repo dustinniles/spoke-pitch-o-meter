@@ -3,6 +3,7 @@ import { G, buildSpokeModel } from './physics.js';
 import { PluckDetector, analyzePluck, synthPluck, ANALYSIS } from './dsp.js';
 import { wheelGeometry } from './geometry.js';
 import { SPOKES, spokeById, spokeLabel } from './spokes.js';
+import { tensionPerTurn, balancingPlan, turnsLabel } from './build.js';
 
 const $ = (id) => document.getElementById(id);
 const LBF = 4.4482216;
@@ -20,7 +21,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 
 function defaultSide(spokeId, lengthMm) {
   return {
-    spokeId, lengthMm, farEnd: 'cross', targetKgf: null,
+    spokeId, lengthMm, farEnd: 'cross', targetKgf: null, spokeLenMm: 290, turnGainKgf: null,
     geo: { erd: 600, pcd: 58, offset: 35, crosses: 3, nipple: 12 },
   };
 }
@@ -127,6 +128,24 @@ function sideStats(w, s) {
 }
 
 function median(a) { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+
+// Tension (N) one full nipple turn adds on this side: the builder's own
+// figure if given, otherwise estimated from the spoke and its length.
+function sideGain(side) {
+  if (side.turnGainKgf > 0) return side.turnGainKgf * G;
+  return tensionPerTurn(spokeById(side.spokeId), side.spokeLenMm || 290);
+}
+
+// Rims are joined opposite the valve, so the joint falls between the two
+// middle holes. Brandt: spokes beside it often have to sit looser.
+function jointHoles(w) { return [w.count / 2, w.count / 2 + 1]; }
+
+function sameSideNeighbours(w, h) {
+  const wrap = (x) => ((x - 1 + w.count) % w.count) + 1;
+  return [wrap(h - 2), wrap(h + 2)];
+}
+
+function prevRound(w) { return w.rounds?.length ? w.rounds[w.rounds.length - 1] : null; }
 
 function devClass(d) { const a = Math.abs(d); return a <= 0.10 ? 'good' : a <= 0.20 ? 'warn' : 'bad'; }
 
@@ -692,6 +711,9 @@ function renderWheel() {
   const w = state.wheel;
   $('exampleBanner').hidden = !w.example;
   $('wheelTitle').textContent = w.name || 'Untitled wheel';
+  const rounds = (w.rounds?.length ?? 0) + 1;
+  $('roundLabel').textContent = rounds > 1 ? `Round ${rounds} · the previous round is kept for comparison` : '';
+  $('roundLabel').hidden = rounds < 2;
   $('dlCsv').hidden = inFrame;
   const fig = $('wheelFig');
   const cx = 200, cy = 200, rRim = 178, rHub = 26;
@@ -715,6 +737,18 @@ function renderWheel() {
   // Valve hole at the top.
   s += `<rect x="${cx - 4}" y="${cy - rRim - 9}" width="8" height="12" rx="2" fill="var(--ink)"/>`;
   s += `<text x="${cx - 7}" y="${cy - rRim + 17}" font-size="13" text-anchor="end" fill="var(--muted)">valve</text>`;
+  // Rim joint, opposite the valve.
+  s += `<line x1="${cx}" y1="${cy + rRim - 7}" x2="${cx}" y2="${cy + rRim + 7}" stroke="var(--ink)" stroke-width="2"/>`;
+  s += `<text x="${cx - 7}" y="${cy + rRim - 9}" font-size="13" text-anchor="end" fill="var(--muted)">joint</text>`;
+  // Last round, faintly, for comparison.
+  const prev = prevRound(w);
+  if (prev) {
+    for (const sk of ['R', 'L']) {
+      const pts = [];
+      for (let h = 1; h <= w.count; h++) if (holeSide(w, h) === sk && prev.readings[h]) pts.push(P(h, rOf(prev.readings[h].T)));
+      if (pts.length > 2) s += `<polygon points="${pts.map((p) => p.map((v) => v.toFixed(1)).join(',')).join(' ')}" fill="none" stroke="var(--${sk === 'R' ? 'accent' : 'left'})" stroke-width="1.2" stroke-opacity="0.35" stroke-linejoin="round" stroke-dasharray="2 3"/>`;
+    }
+  }
   // Side means.
   for (const sk of ['R', 'L']) {
     const st = stats[sk];
@@ -754,7 +788,7 @@ function renderWheel() {
   // Generous invisible tap areas on top of the dots.
   s += hits.join('');
   fig.innerHTML = s;
-  $('wheelLegend').innerHTML = `<span class="side-dot R"></span>Right side, solid line. <span class="side-dot L"></span>Left side, dashed line. Dotted rings mark each side's average; rings are labelled in ${state.unit}. Dots show each spoke's distance from its side's average: small and green within 10%, larger and amber within 20%, largest, red and outlined beyond that. Tap a dot or a table row to re-measure that spoke.`;
+  $('wheelLegend').innerHTML = `<span class="side-dot R"></span>Right side, solid line. <span class="side-dot L"></span>Left side, dashed line. Dotted rings mark each side's average; rings are labelled in ${state.unit}. Dots show each spoke's distance from its side's average: small and green within 10%, larger and amber within 20%, largest, red and outlined beyond that. ${prevRound(w) ? 'The faint dotted outline is the previous round. ' : ''}Tap a dot or a table row to re-measure that spoke.`;
 
   // Stats.
   const sb = $('stats');
@@ -768,7 +802,8 @@ function renderWheel() {
       ${st.n ? `<div><span class="data" style="font-size:22px;font-weight:600">${fmtT(st.mean)}</span> <span class="muted small">${state.unit} avg</span></div>
       <dl><dt>Measured</dt><dd>${st.n}/${st.total}</dd><dt>Range</dt><dd>${fmtT(st.min)}–${fmtT(st.max)}</dd>
       <dt>Std dev</dt><dd>${(st.sd / st.mean * 100).toFixed(1)}%</dd><dt>Beyond ±10%</dt><dd>${st.out10}</dd>
-      ${st.overtone ? `<dt>Overtone check</dt><dd>${st.overtone.gap >= 0 ? '+' : '−'}${Math.abs(st.overtone.gap * 100).toFixed(1)}% (${st.overtone.n})</dd>` : ''}</dl>
+      ${st.overtone ? `<dt>Overtone check</dt><dd>${st.overtone.gap >= 0 ? '+' : '−'}${Math.abs(st.overtone.gap * 100).toFixed(1)}% (${st.overtone.n})</dd>` : ''}
+      ${roundChange(w, sk) ? `<dt>Avg change</dt><dd>${roundChange(w, sk)}</dd>` : ''}</dl>
       <span class="chip ${cls}">${st.out20 ? st.out20 + ' beyond ±20%' : st.out10 ? 'Close; true it up' : 'Even'}</span>` : `<p class="small muted">No readings yet.</p>`}`;
     sb.appendChild(el);
   }
@@ -781,17 +816,82 @@ function renderWheel() {
 
   // Table in measuring order.
   const tb = $('spokeTable');
-  let t = `<thead><tr><th>Spoke</th><th>Side</th><th>${state.unit}</th><th>vs avg</th><th>Hz</th></tr></thead><tbody>`;
+  const prevR = prevRound(w);
+  let t = `<thead><tr><th>Spoke</th><th>Side</th><th>${state.unit}</th><th>vs avg</th>${prevR ? '<th>Δ round</th>' : ''}<th>Hz</th></tr></thead><tbody>`;
   for (const h of orderList(w)) {
     const r = w.readings[h];
     const sk = holeSide(w, h);
     const dev = r ? r.T / stats[sk].mean - 1 : null;
     t += `<tr data-hole="${h}" class="${h === w.current ? 'sel' : ''}"><td>${h}</td><td><span class="side-dot ${sk}"></span>${sk}</td><td>${r ? fmtT(r.T) : '—'}</td>
-      <td class="dev ${dev == null ? '' : devClass(dev)}">${dev == null ? '' : (dev >= 0 ? '+' : '−') + Math.abs(dev * 100).toFixed(1) + '%'}</td><td>${r && r.f ? r.f.toFixed(0) : ''}</td></tr>`;
+      <td class="dev ${dev == null ? '' : devClass(dev)}">${dev == null ? '' : (dev >= 0 ? '+' : '−') + Math.abs(dev * 100).toFixed(1) + '%'}</td>${prevR ? `<td>${r && prevR.readings[h] ? signed(r.T - prevR.readings[h].T) : ''}</td>` : ''}<td>${r && r.f ? r.f.toFixed(0) : ''}</td></tr>`;
   }
   tb.innerHTML = t + '</tbody>';
+  renderPlan(w, stats);
   renderSaved();
 }
+
+function signed(N) { const v = N * UNIT[state.unit].f; return `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(state.unit === 'N' ? 0 : 1)}`; }
+
+function roundChange(w, sk) {
+  const prev = prevRound(w);
+  if (!prev) return '';
+  const d = [];
+  for (const [h, r] of Object.entries(w.readings)) if (holeSide(w, +h) === sk && prev.readings[h]) d.push(r.T - prev.readings[h].T);
+  return d.length ? signed(d.reduce((a, b) => a + b, 0) / d.length) : '';
+}
+
+// Brandt's balancing: bring odd spokes to their side's median while their two
+// same-side neighbours take half the opposite turn, so the rim stays put.
+function renderPlan(w, stats) {
+  const box = $('planBody');
+  const parts = [];
+  let any = false;
+  for (const sk of ['R', 'L']) {
+    const side = w.sides[sk];
+    const gain = sideGain(side);
+    const tensions = {};
+    for (const [h, r] of Object.entries(w.readings)) if (holeSide(w, +h) === sk) tensions[h] = r.T;
+    const plan = balancingPlan({ tensions, neighbours: (h) => sameSideNeighbours(w, h), gain, joint: jointHoles(w) });
+    if (plan.target == null) continue;
+    const lines = plan.steps.map((st) => {
+      any = true;
+      const verb = st.turns > 0 ? 'Tighten' : 'Loosen';
+      const why = {
+        small: ' A quarter turn is small enough to leave its neighbours alone.',
+        zone: st.neighbours.length ? ' Its other neighbour is off the same way, so leave that one.' : ' Its neighbours are off the same way, so adjust this spoke only.',
+        busy: st.neighbours.length ? '' : ' Its neighbours are already in the plan, so adjust this spoke only.',
+      }[st.reason] ?? '';
+      const nb = (st.neighbours.length
+        ? ` ${st.turns > 0 ? 'Loosen' : 'Tighten'} ${st.neighbours.map((n) => n.hole).join(' and ')} by ${turnsLabel(st.neighbours[0].turns)} turn${st.neighbours.length > 1 ? ' each' : ''}.`
+        : '') + why;
+      const joint = st.nearJoint ? ' <span class="muted">Next to the rim joint, where spokes often have to sit looser; check alignment first.</span>' : '';
+      return `<li><button type="button" class="planspoke" data-hole="${st.hole}">Spoke ${st.hole}</button> ${fmtT(st.T)} ${state.unit}, ${Math.abs(st.dev * 100).toFixed(0)}% ${st.dev < 0 ? 'low' : 'high'}. <b>${verb} ${turnsLabel(st.turns)} turn.</b>${nb}${joint}</li>`;
+    });
+    parts.push(`<div class="plan-side"><h3><span class="side-dot ${sk}"></span>${sideName(w, sk)}</h3>
+      <p class="footnote">Median ${fmtT(plan.target)} ${state.unit}. One full turn ≈ ${fmtT(gain)} ${state.unit} on this spoke (${side.turnGainKgf > 0 ? 'your figure' : 'estimated'}).</p>
+      ${lines.length ? `<ul class="plan">${lines.join('')}</ul>` : '<p class="small">Every measured spoke is within 5% of the median. Nothing to balance.</p>'}</div>`);
+  }
+  box.innerHTML = parts.length ? parts.join('') : '<p class="small muted">Measure at least four spokes on a side to get a plan.</p>';
+  $('planNote').hidden = !any;
+}
+
+$('planBody').addEventListener('click', (e) => { const h = e.target.closest('[data-hole]')?.dataset.hole; if (h) gotoSpoke(+h); });
+
+$('nextRoundBtn').addEventListener('click', () => {
+  const w = state.wheel;
+  if (w.example) { toast('Start a real wheel first'); return; }
+  if (!Object.keys(w.readings).length) { toast('Measure some spokes first'); return; }
+  w.rounds = w.rounds ?? [];
+  const snap = {};
+  for (const [h, r] of Object.entries(w.readings)) snap[h] = { T: r.T, f: r.f };
+  w.rounds.push({ at: Date.now(), readings: snap });
+  if (w.rounds.length > 12) w.rounds.shift();
+  w.readings = {};
+  w.current = orderList(w)[0];
+  saveAll();
+  renderWheel(); renderSpokeBar(); renderContext();
+  toast(`Round ${w.rounds.length + 1} started`);
+});
 
 function gotoSpoke(h) {
   state.wheel.current = h;
@@ -806,7 +906,8 @@ $('spokeTable').addEventListener('click', (e) => { const h = e.target.closest('t
 
 function csv() {
   const w = state.wheel;
-  const rows = [['spoke', 'side', 'tension_kgf', 'tension_N', 'frequency_Hz', 'plucks', 'overtone_check_kgf', 'pitch_glide_pct', 'spoke_type', 'free_length_mm']];
+  const prev = prevRound(w);
+  const rows = [['spoke', 'side', 'tension_kgf', 'tension_N', 'frequency_Hz', 'plucks', 'overtone_check_kgf', 'pitch_glide_pct', 'previous_round_kgf', 'spoke_type', 'free_length_mm', 'spoke_length_mm']];
   for (const h of orderList(w)) {
     const r = w.readings[h];
     const sk = holeSide(w, h);
@@ -814,7 +915,7 @@ function csv() {
     const ov = r ? r.plucks.map((p) => p.To).filter((v) => v) : [];
     const gl = r ? r.plucks.map((p) => p.glide).filter((v) => v != null) : [];
     rows.push([h, sk, r ? (r.T / G).toFixed(1) : '', r ? r.T.toFixed(0) : '', r?.f ? r.f.toFixed(2) : '', r ? r.plucks.map((p) => (p.T / G).toFixed(1)).join(' ') : '',
-      ov.length ? (median(ov) / G).toFixed(1) : '', gl.length ? (median(gl) * 100).toFixed(2) : '', spokeLabel(spokeById(side.spokeId)), side.lengthMm]);
+      ov.length ? (median(ov) / G).toFixed(1) : '', gl.length ? (median(gl) * 100).toFixed(2) : '', prev?.readings[h] ? (prev.readings[h].T / G).toFixed(1) : '', spokeLabel(spokeById(side.spokeId)), side.lengthMm, side.spokeLenMm ?? '']);
   }
   return rows.map((r) => r.map((v) => /[",\s]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(',')).join('\n');
 }
@@ -909,6 +1010,8 @@ function renderSidePanel(sk) {
         <select id="${p}far"><option value="cross" ${side.farEnd === 'cross' ? 'selected' : ''}>The cross</option><option value="hub" ${side.farEnd === 'hub' ? 'selected' : ''}>The hub</option></select></div>
       <div class="field full help">Measure from where the spoke leaves the nipple to the middle of the crossing where it touches another spoke. For radial spokes, or crossings that don't touch, measure to the hub flange and choose “The hub”.</div>
       <div class="field"><label for="${p}tgt">Target (kgf, optional)</label><input id="${p}tgt" type="number" inputmode="decimal" min="10" max="250" step="1" value="${side.targetKgf ?? ''}"></div>
+      <div class="field"><label for="${p}slen">Spoke length (mm)</label><input id="${p}slen" type="number" inputmode="decimal" min="100" max="400" step="1" value="${side.spokeLenMm ?? 290}"></div>
+      <div class="field"><label for="${p}gain">Tension per turn (kgf)</label><input id="${p}gain" type="number" inputmode="decimal" min="5" max="120" step="1" placeholder="auto" value="${side.turnGainKgf ?? ''}"></div>
       <div class="field full"><div class="calc-out" id="${p}pitch">—</div></div>
     </div>
     <details class="more"><summary>Calculate the free length from wheel geometry</summary>
@@ -929,6 +1032,10 @@ function renderSidePanel(sk) {
     side.farEnd = $(p + 'far').value;
     const tg = parseFloat($(p + 'tgt').value);
     side.targetKgf = tg > 0 ? tg : null;
+    const sl = parseFloat($(p + 'slen').value);
+    if (sl >= 100 && sl <= 400) side.spokeLenMm = sl;
+    const gn = parseFloat($(p + 'gain').value);
+    side.turnGainKgf = gn > 0 ? gn : null;
     Object.assign(side.geo, {
       erd: parseFloat($(p + 'erd').value) || g.erd, crosses: +$(p + 'cross').value,
       pcd: parseFloat($(p + 'pcd').value) || g.pcd, offset: parseFloat($(p + 'off').value) || g.offset, nipple: +$(p + 'nip').value,
@@ -942,6 +1049,8 @@ function renderSidePanel(sk) {
     const r = geoFor(sk);
     side.lengthMm = Math.round(r.freeLength * 2) / 2;
     side.farEnd = r.farEnd;
+    side.spokeLenMm = Math.round(r.length);
+    $(p + 'slen').value = side.spokeLenMm;
     $(p + 'len').value = side.lengthMm;
     $(p + 'far').value = side.farEnd;
     saveAll(); refreshSideOutputs(sk); renderContext();
@@ -969,7 +1078,8 @@ function refreshSideOutputs(sk) {
     const m = modelFor(side);
     const f = m.freqAt(tk * G);
     const naive = m.stringTension(f) / G;
-    $(p + 'pitch').innerHTML = `At ${tk} kgf this spoke rings at <b class="data">${f.toFixed(0)} Hz</b> (${noteName(f)}). The plain string formula would read that pitch as ${naive.toFixed(0)} kgf.`;
+    const gainK = sideGain(side) / G;
+    $(p + 'pitch').innerHTML = `At ${tk} kgf this spoke rings at <b class="data">${f.toFixed(0)} Hz</b> (${noteName(f)}). The plain string formula would read that pitch as ${naive.toFixed(0)} kgf. One full nipple turn changes its tension by about ${gainK.toFixed(0)} kgf (${(gainK / 4).toFixed(0)} per quarter turn)${side.turnGainKgf > 0 ? ', your figure' : ''}; the balancing plan uses this.`;
   } catch { $(p + 'pitch').textContent = '—'; }
   const r = geoFor(sk);
   $(p + 'geoOut').innerHTML = `spoke ≈ ${r.length.toFixed(1)} mm<br>free ≈ ${r.freeLength.toFixed(1)} mm ${r.farEnd === 'hub' ? '(to hub)' : '(to cross)'}`;
@@ -1066,6 +1176,7 @@ function renderAbout() {
   $('aboutProse').innerHTML = `
     <h2>How the Pitch-o-meter works</h2>
     <p>A tight spoke rings like a guitar string: the tighter it is, the higher the note. Pluck it, and the microphone hears that note. From the spoke's mass, stiffness and free length, the app works out the tension that would make it ring at exactly that pitch.</p>
+    <p>Jobst Brandt, in <i>The Bicycle Wheel</i>, called tone a quick way to compare spokes but “not an effective way to gauge the tension in a wheel because the tone at a given tension varies with spoke pattern, spoke length and spoke type.” Those three are exactly what the app models.</p>
     <h3>What it does differently</h3>
     <ul>
       <li><b>It treats the spoke as a stiff beam, not a string.</b> A spoke resists bending, which raises its pitch, most of all at low tension and near the nipple, where it's held rigidly. The classic formula <span class="data">T = 4·μ·L²·f²</span> ignores this and reads high. The Pitch-o-meter solves the tensioned-beam equation along the actual spoke, butted ends and bladed sections included.</li>
@@ -1088,7 +1199,21 @@ function renderAbout() {
       <li>Rest a fingertip on the spoke it crosses, near the cross. This damps the partner spoke and makes the crossing behave like a fixed point.</li>
       <li>Pluck sideways and lightly, about a quarter of the way along the free length from the nipple (roughly 5 cm), with a fingernail or a plastic pick. Light plucks need less correction, and plucking there rings both overtones the cross-check uses; plucking dead centre or a third of the way along silences one of them. For bladed spokes, pluck across the flat face.</li>
       <li>Hold the phone 10–20 cm away, bottom edge (the microphone) toward the spoke, in a quiet room.</li>
+      <li>Take the tire off or let it down. An inflated tire squeezes the rim and lowers every spoke's tension; Brandt's figures for a 25 mm tubular at 8 bar work out to about 7 kgf less per spoke on a 36-spoke wheel.</li>
+      <li>Measure after stress relieving, and with the wind-up taken out of each spoke. Stress relieving seats the elbows and drops tension, and a twisted spoke unwinds later and shifts.</li>
+      <li>Expect the spokes beside the rim joint, opposite the valve, to read a little low. Brandt notes that some rims need them looser, and the Wheel tab marks the joint.</li>
     </ul>
+    <h3>Building a wheel with it</h3>
+    <p>The order follows Brandt's method; the app helps at each step.</p>
+    <ol>
+      <li><b>Take out the slack</b> evenly, nipples to the same thread engagement, so the rim stays round.</li>
+      <li><b>Tension in rounds</b> of one turn, then quarter turns, starting at the valve. After each round, map the wheel and tap <i>Start next round</i>; the table then shows each spoke's change, and the chart keeps the last round as a faint outline.</li>
+      <li><b>True as you go.</b> Use the map to find odd spokes. If a loose spoke sits in a tight zone, or the other way round, adjust only that spoke.</li>
+      <li><b>Find the rim's limit</b> by stress relieving: squeeze parallel pairs of spokes hard all round. If the rim goes out of true in two big waves, the tension is too high; loosen every spoke half a turn. Note the tension that holds, and enter it as the target in Setup.</li>
+      <li><b>Balance.</b> Follow the plan on the Wheel tab. For each move, turn about a quarter past the mark and back off to leave no wind-up.</li>
+      <li><b>Stress relieve, re-true, and map once more.</b> On an offset rear wheel the right side reads higher, but each side should be even on its own.</li>
+    </ol>
+    <p>To replace a broken spoke, measure its neighbours in single-spoke mode and tighten the new one to match, as Brandt suggests.</p>
     <h3>How accurate is it?</h3>
     <p>Spoke-to-spoke comparisons, which are what truing needs, repeat to about 1%. Absolute tension depends on the free length you enter, the spoke's published dimensions, and how the nipple and the crossing hold the spoke. Expect roughly ±5–7% until you calibrate against a trusted reference. For scale, a load-cell test of shop tensiometers found the Park TM-1 and Wheel Fanatyk reading about 100 N low and the DT Swiss Tensio about 100 N high using their own charts.</p>
     <h3>What is still uncertain</h3>
@@ -1100,6 +1225,7 @@ function renderAbout() {
       <li>Thomas Wilson, <a href="https://savetheneurons.blogspot.com/2019/01/your-spoke-tension-meter-is-probably.html" target="_blank" rel="noopener">“Your spoke tension meter is probably…”</a> (2019): the load-cell comparison above.</li>
       <li><a href="https://www.ihpva.org/HParchive/PDF/hp53-2002.pdf" target="_blank" rel="noopener"><i>Human Power</i> No. 53</a> (2002): 140 spokes, tensiometer vs. pitch, with an empirical stiffness length correction that matches this model.</li>
       <li><a href="https://www.sheldonbrown.com/spoke-pitch.html" target="_blank" rel="noopener">Sheldon Brown: Check spoke tension by ear</a>.</li>
+      <li>Jobst Brandt, <i>The Bicycle Wheel</i>, 3rd ed. (Avocet): the building method, balancing rule and measurement cautions above.</li>
       <li>Geuzaine, Foti &amp; Denoël, “On the identification of the axial force and bending stiffness of stay cables anchored to flexible supports”, <i>Journal of Sound and Vibration</i> (2021): why the two end conditions can't be told apart from frequencies.</li>
       <li>Legge &amp; Fletcher, “Nonlinear generation of missing modes on a vibrating string”, <i>JASA</i> (1984): the pitch rise from hard plucks.</li>
       <li>Hua &amp; Sarkar, “Matrix pencil method for estimating parameters of exponentially damped/undamped sinusoids in noise”, <i>IEEE Trans. ASSP</i> (1990): splitting near-identical modes.</li>

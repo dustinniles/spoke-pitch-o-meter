@@ -14,8 +14,9 @@ To host it anywhere else, run `node tools/build.mjs` and upload `dist/site` to a
 
 1. **Setup tab:** choose the spoke and enter the **free length**. That's the distance from where the spoke leaves the nipple to the middle of the crossing where it touches another spoke. For radial spokes, or crossings that don't touch, measure to the hub flange and set "Measured to" to "The hub". You can also compute the length from ERD, flange diameter, flange offset and cross pattern.
 2. **Gauge tab:** tap **Listen**. Rest a fingertip on the spoke that crosses the one you're measuring, near the cross, and pluck sideways and lightly, about a quarter of the way along the free length from the nipple (roughly 5 cm). Bladed spokes: pluck across the flat face.
-3. **Map a wheel:** each spoke records once two plucks agree within 2.5%, then the gauge moves to the next spoke. The **Wheel** tab shows the tension map, per-side statistics, and spokes beyond ±10% / ±20% of their side's average. Tap any spoke to re-measure it.
-4. If a reading says **Unsure**, the pluck had two plausible peaks. Pluck again with the crossing spoke damped, or tap the right peak in the spectrum or the chips below it.
+3. **Measure under fair conditions:** tire off or deflated (an inflated tire squeezes the rim and lowers every spoke), after stress relieving, with wind-up taken out of each spoke. Spokes beside the rim joint, opposite the valve, often read a little low.
+4. **Map a wheel:** each spoke records once two plucks agree within 2.5%, then the gauge moves to the next spoke. The **Wheel** tab shows the tension map, per-side statistics, and spokes beyond ±10% / ±20% of their side's average. Tap any spoke to re-measure it. Build in rounds: **Start next round** keeps the previous map, so the table shows what each adjustment did. The **Balancing plan** follows Jobst Brandt's rule: bring an odd spoke to its side's median in quarter turns, and give its two same-side neighbours half the opposite turn, so the rim stays true. Tension per turn is estimated from the spoke (about 9–11 kgf per quarter turn for DT spokes); enter your own figure in Setup if you measure it.
+5. If a reading says **Unsure**, the pluck had two plausible peaks. Pluck again with the crossing spoke damped, or tap the right peak in the spectrum or the chips below it.
 
 No microphone handy, or want to measure from a recording? **Analyse a recording** accepts a Voice Memo. Turn off Voice Memos' "Enhance Recording" first.
 
@@ -37,6 +38,7 @@ No microphone handy, or want to measure from a recording? **Analyse a recording*
 | `src/dsp.js` | FFT, pluck detector, spectrum peak finder, candidate scoring (overtone fingerprint, sustain, SNR, bladed-spoke twin modes), pitch-glide correction, overtone cross-check, synthetic plucks |
 | `src/pencil.js` | Matrix pencil method (complex baseband, Jacobi eigensolver) for splitting modes under 1% apart |
 | `src/geometry.js` | Spoke length and interlaced-cross position from wheel geometry |
+| `src/build.js` | Tension per nipple turn and Brandt's balancing plan |
 | `src/spokes.js` | Spoke database (DT Swiss, Sapim, Pillar, Wheelsmith, plain gauge), with sources and the mass-factor rationale |
 | `src/app.js`, `src/index.template.html` | UI, microphone pipeline (AudioWorklet, ScriptProcessor fallback), wheel mapping |
 | `tools/build.mjs` | Inlines everything into one page and writes the deployable site to `dist/site/` (what Pages serves) |
@@ -51,7 +53,9 @@ Build with `node tools/build.mjs`. There are no dependencies beyond Node 18+; th
 - Mega-Mouse *Spoke Tensioner* (Android sibling of the original): <https://www.mega-mouse.net/>
 - *Human Power* No. 53 (2002), tensiometer vs. musical pitch on 140 spokes: <https://www.ihpva.org/HParchive/PDF/hp53-2002.pdf>
 - Bobbit, Kazi & Li, "Acoustic Spoke Tensiometer for Bicycle Wheels", UIUC ECE 445 (2012)
+- Jobst Brandt, *The Bicycle Wheel*, 3rd ed., Avocet (ISBN 0-9607236-6-8)
 - Sheldon Brown / John Allen, "Check spoke tension by ear": <https://www.sheldonbrown.com/spoke-pitch.html>
+- Papadopoulos, US Patent 5,103,414, "Method for trueing spoked wheels" (1992): about 43 kgf per full nipple turn on a 2.0 mm spoke
 - Geuzaine, Foti & Denoël, "On the identification of the axial force and bending stiffness of stay cables anchored to flexible supports", J. Sound Vib. 511 (2021)
 - Legge & Fletcher, "Nonlinear generation of missing modes on a vibrating string", JASA 76 (1984), doi:10.1121/1.391007
 - Hua & Sarkar, "Matrix pencil method for estimating parameters of exponentially damped/undamped sinusoids in noise", IEEE TASSP 38 (1990), doi:10.1109/29.56027
