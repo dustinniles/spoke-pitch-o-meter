@@ -3,7 +3,7 @@ import { G, buildSpokeModel } from './physics.js';
 import { PluckDetector, analyzePluck, synthPluck, ANALYSIS } from './dsp.js';
 import { wheelGeometry } from './geometry.js';
 import { SPOKES, spokeById, spokeLabel } from './spokes.js';
-import { tensionPerTurn, balancingPlan, turnsLabel } from './build.js';
+import { tensionPerTurn, balancingPlan, turnsLabel, expectedSideRatio, dishOffset, dishCorrection, nearestQuarter, spokeAxialStiffness } from './build.js';
 
 const $ = (id) => document.getElementById(id);
 const LBF = 4.4482216;
@@ -153,18 +153,35 @@ function sideStats(w, s) {
   return { n: vals.length, total, mean, sd, min, max, out10, out20, median: median(Ts), overtone, suspect: sus };
 }
 
+// Hub and rim dimensions count once they've been entered for both sides.
+function hubKnown(w) { return !!(w.sides.L.geo?.entered && w.sides.R.geo?.entered); }
+function dishGeo(w) {
+  const len = (g) => (off) => wheelGeometry({ erd: g.erd, spokes: w.count, crosses: g.crosses, flangePcd: g.pcd, flangeOffset: off, nippleLen: g.nipple }).length;
+  const L = w.sides.L.geo, R = w.sides.R.geo;
+  return { wL: L.offset, wR: R.offset, lenL: len(L), lenR: len(R) };
+}
+
 // Expected tension of side `sk` relative to the other side. Sideways pulls
-// balance, so tension goes with spoke length over flange offset; without
-// offsets entered for both sides, a typical dish for the wheel type.
+// balance, so tension goes with spoke length over flange offset; without the
+// hub entered, a typical dish for the wheel type.
 function sideRatio(w, sk) {
-  const o = sk === 'R' ? 'L' : 'R';
-  const a = w.sides[sk].geo, b = w.sides[o].geo;
-  if (a && b && a.offset > 0 && b.offset > 0 && a.offset !== b.offset) {
-    const len = (g) => wheelGeometry({ erd: g.erd, spokes: w.count, crosses: g.crosses, flangePcd: g.pcd, flangeOffset: g.offset, nippleLen: g.nipple }).length;
-    return (b.offset / len(b)) / (a.offset / len(a));
-  }
-  const lr = w.type === 'rear' ? 0.6 : w.type === 'frontDisc' ? 1.25 : 1; // left ÷ right
+  const lr = hubKnown(w) ? expectedSideRatio(dishGeo(w))
+    : w.type === 'rear' ? 0.55 : w.type === 'frontDisc' ? 1.25 : 1; // left ÷ right
   return sk === 'L' ? lr : 1 / lr;
+}
+
+// Where the rim sits, from the tension balance between the sides, once the
+// hub is entered and each side has six trusted readings. Means, not medians:
+// it's the sum of the sideways pulls that has to balance.
+function dishCheck(w, stats) {
+  if (!hubKnown(w) || stats.L.n < 6 || stats.R.n < 6) return null;
+  const geo = dishGeo(w);
+  const measured = stats.L.mean / stats.R.mean;
+  const d = dishOffset({ ratio: measured, ...geo });
+  const tgt = w.sides.R.targetKgf;
+  const kOf = (sk) => spokeAxialStiffness(spokeById(w.sides[sk].spokeId), w.sides[sk].spokeLenMm || 290);
+  const fix = dishCorrection({ d, TL: stats.L.mean, TR: stats.R.mean, TR1: tgt ? tgt * G : stats.R.mean, ...geo, kL: kOf('L'), kR: kOf('R') });
+  return { expected: expectedSideRatio(geo), measured, d, fix, toTarget: !!tgt };
 }
 
 function median(a) { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
@@ -879,7 +896,11 @@ function renderWheel() {
   if (stats.R.n && stats.L.n) {
     const el = document.createElement('div');
     el.className = 'stat'; el.style.gridColumn = '1 / -1';
-    el.innerHTML = `<dl><dt>Left ÷ right average</dt><dd>${(stats.L.mean / stats.R.mean * 100).toFixed(0)}%</dd></dl>`;
+    const dish = dishCheck(w, stats);
+    const off = dish && (Math.abs(dish.d) < 0.3 ? 'Centred' : `${Math.abs(dish.d).toFixed(1)} mm ${dish.d > 0 ? 'right' : 'left'}`);
+    el.innerHTML = `<dl><dt>Left ÷ right average</dt><dd>${(stats.L.mean / stats.R.mean * 100).toFixed(0)}%</dd>
+      ${dish ? `<dt>Expected from the hub</dt><dd>${(dish.expected * 100).toFixed(0)}%</dd><dt>Rim off centre (est.)</dt><dd>${off}</dd>` : ''}</dl>
+      ${!dish && !hubKnown(w) && !w.example ? '<p class="footnote">Enter the hub’s flange dimensions for both sides in Setup to estimate dish from these tensions.</p>' : ''}`;
     sb.appendChild(el);
   }
 
@@ -957,6 +978,17 @@ function renderPlan(w, stats) {
     parts.push(`<div class="plan-side"><h3><span class="side-dot ${sk}"></span>${sideName(w, sk)}</h3>
       <p class="footnote">Median ${fmtT(plan.target)} ${state.unit}. One full turn ≈ ${fmtT(gain)} ${state.unit} on this spoke (${side.turnGainKgf > 0 ? 'your figure' : 'estimated'}).</p>
       ${recheck}${lines.length ? `<ul class="plan">${lines.join('')}</ul>` : `<p class="small">Every ${sus.size ? 'other ' : ''}measured spoke is within 5% of the median. Nothing to balance.</p>`}</div>`);
+  }
+  const dish = dishCheck(w, stats);
+  if (dish && Math.abs(dish.d) >= 1) {
+    const { fix } = dish;
+    const tl = nearestQuarter(fix.turnsL), tr = nearestQuarter(fix.turnsR);
+    const act = (t, side) => (t === 0 ? '' : `${t > 0 ? 'tighten' : 'loosen'} every ${side} spoke ${turnsLabel(t)} turn`);
+    const acts = [act(tl, 'left'), act(tr, 'right')].filter(Boolean).join(' and ');
+    const keep = dish.toTarget ? `with the right side at its ${fmtT(fix.TR1)} ${state.unit} target` : `and keep the right side near ${fmtT(fix.TR1)} ${state.unit}`;
+    parts.unshift(`<div class="plan-side"><h3>Dish</h3>
+      <p class="small">Going by the balance of tension between the sides, the rim sits about <b>${Math.abs(dish.d).toFixed(1)} mm toward the ${dish.d > 0 ? 'right' : 'left'} flange</b>. Check it with a dish gauge before acting: the estimate is good to about a millimetre, and an inflated tire makes it read further toward the tighter side.</p>
+      ${acts ? `<p class="small">To centre it ${keep}: <b>${acts[0].toUpperCase() + acts.slice(1)}</b>, a quarter turn at a time all the way round, then map again. The left side should end near ${fmtT(fix.TL1)} ${state.unit}.</p>` : ''}</div>`);
   }
   box.innerHTML = parts.length ? parts.join('') : '<p class="small muted">Measure at least four spokes on a side to get a plan.</p>';
   $('planNote').hidden = !any;
@@ -1112,6 +1144,7 @@ function renderSidePanel(sk) {
         <div class="field"><label for="${p}off">Centre to flange (mm)</label><input id="${p}off" type="number" inputmode="decimal" step="0.5" value="${g.offset}"></div>
         <div class="field"><label for="${p}nip">Nipple length (mm)</label><select id="${p}nip">${[12, 14, 16].map((n) => `<option ${n === g.nipple ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
         <div class="field"><label>Result</label><div class="calc-out data" id="${p}geoOut">—</div></div>
+        <div class="field full help">Centre to flange runs from the hub's centre line to the middle of the flange. For a rim with offset spoke holes, add the offset on the side the holes lean away from and take it off the other. With both sides entered, the Wheel tab also estimates dish from the tension balance.</div>
       </div>
       <div class="row" style="margin-top:10px"><button type="button" class="btn" id="${p}useGeo">Use this free length</button></div>
     </details>`;
@@ -1134,8 +1167,13 @@ function renderSidePanel(sk) {
     refreshSideOutputs(sk);
     renderContext();
   };
-  el.querySelectorAll('input, select').forEach((i) => i.addEventListener('change', upd));
+  const geoIds = ['erd', 'cross', 'pcd', 'off', 'nip'].map((k) => p + k);
+  el.querySelectorAll('input, select').forEach((i) => i.addEventListener('change', () => {
+    if (geoIds.includes(i.id)) side.geo.entered = true;
+    upd();
+  }));
   $(p + 'useGeo').addEventListener('click', () => {
+    side.geo.entered = true;
     const r = geoFor(sk);
     side.lengthMm = Math.round(r.freeLength * 2) / 2;
     side.farEnd = r.farEnd;
@@ -1301,6 +1339,7 @@ function renderAbout() {
       <li><b>True as you go.</b> Use the map to find odd spokes. If a loose spoke sits in a tight zone, or the other way round, adjust only that spoke.</li>
       <li><b>Find the rim's limit</b> by stress relieving: squeeze parallel pairs of spokes hard all round. If the rim goes out of true in two big waves, the tension is too high; loosen every spoke half a turn. Note the tension that holds, and enter it as the target in Setup.</li>
       <li><b>Balance.</b> Follow the plan on the Wheel tab. For each move, turn about a quarter past the mark and back off to leave no wind-up.</li>
+      <li><b>Check dish.</b> The two sides' sideways pulls have to cancel, so with the hub's flange dimensions entered in Setup, the ratio of left to right tension says where the rim sits: on an 11-speed road hub, each millimetre toward the drive side drops the left side by about 4% of the right's tension. The Wheel tab turns that into an estimate and the turns on each side that would centre the rim. Confirm with a dish gauge.</li>
       <li><b>Stress relieve, re-true, and map once more.</b> On an offset rear wheel the right side reads higher, but each side should be even on its own.</li>
     </ol>
     <p>To replace a broken spoke, measure its neighbours in single-spoke mode and tighten the new one to match, as Brandt suggests.</p>

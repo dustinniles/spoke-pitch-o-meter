@@ -98,3 +98,42 @@ export function turnsLabel(t) {
   const f = ['', '¼', '½', '¾'][frac];
   return `${whole ? whole : ''}${f}` || '0';
 }
+
+// --- Dish from the tension balance --------------------------------------------
+// Sideways pulls cancel around the rim: each side's spokes pull with
+// T·w/l, where w is the flange's distance from the rim's centre plane and l the
+// spoke length. A rim pulled d mm toward the right flange makes those w_R − d
+// and w_L + d, so the left ÷ right tension ratio pins down d.
+//   wL, wR: centre-to-flange distances (mm) with the rim centred
+//   lenL(w), lenR(w): spoke length (mm) with the flange w mm from the rim plane
+export function expectedSideRatio({ wL, wR, lenL, lenR, d = 0 }) {
+  return ((wR - d) / lenR(wR - d)) / ((wL + d) / lenL(wL + d));
+}
+
+// Rim offset (mm, positive toward the right flange) that explains a measured
+// left ÷ right ratio of average tensions.
+export function dishOffset({ ratio, wL, wR, lenL, lenR }) {
+  let lo = -wL + 0.5, hi = wR - 0.5;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (expectedSideRatio({ wL, wR, lenL, lenR, d: mid }) > ratio) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+// Nipple turns on every spoke of each side that bring a rim d mm off centre
+// back to centre and leave the right side at TR1 (N); the left side then
+// settles at whatever balances it. Each spoke's unstretched length has to
+// change by its change in geometric length plus its change in stretch, ΔT/k.
+// The rim's hoop compression (hundredths of a mm) is left out. Positive turns
+// tighten.
+export function dishCorrection({ d, TL, TR, TR1 = TR, wL, wR, lenL, lenR, kL, kR }) {
+  const TL1 = TR1 * expectedSideRatio({ wL, wR, lenL, lenR });
+  const pitch = THREAD_PITCH_MM * 1e-3;
+  const sL = (lenL(wL + d) - lenL(wL)) * 1e-3 + (TL1 - TL) / kL;
+  const sR = (lenR(wR - d) - lenR(wR)) * 1e-3 + (TR1 - TR) / kR;
+  return { turnsL: sL / pitch, turnsR: sR / pitch, TL1, TR1 };
+}
+
+// Nearest quarter turn.
+export function nearestQuarter(t) { return Math.round(t * 4) / 4; }

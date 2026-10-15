@@ -17,7 +17,8 @@ To host it anywhere else, run `node tools/build.mjs` and upload `dist/site` to a
 3. **Measure under fair conditions:** tire off or deflated (an inflated tire squeezes the rim and lowers every spoke), after stress relieving, with wind-up taken out of each spoke. Spokes beside the rim joint, opposite the valve, often read a little low.
 4. **Map a wheel:** each spoke records once two plucks agree within 2.5%, then the gauge moves to the next spoke. The **Wheel** tab shows the tension map, per-side statistics, and spokes beyond ±10% / ±20% of their side's average. Tap any spoke to re-measure it. Build in rounds: **Start next round** keeps the previous map, so the table shows what each adjustment did. The **Balancing plan** follows Jobst Brandt's rule: bring an odd spoke to its side's median in quarter turns, and give its two same-side neighbours half the opposite turn, so the rim stays true. Tension per turn is estimated from the spoke (about 9–11 kgf per quarter turn for DT spokes); enter your own figure in Setup if you measure it.
 5. If a reading says **Unsure**, the pluck had two plausible peaks. Pluck again with the crossing spoke damped, or tap the right peak in the spectrum or the chips below it.
-6. **Re-check** and **≈** marks on the Wheel tab: a reading more than 1.6× off the rest of its side is usually the wrong tone (an overtone, or the crossed pair swinging together), so it's left out of the averages and the plan until you re-measure it. Partners marked ≈ read the same pitch to within 0.15%, a sign the pair rang as one; damp the partner and re-measure both.
+6. **Dish check:** enter the hub's flange dimensions for both sides (Setup → Calculate the free length from wheel geometry) and the Wheel tab estimates where the rim sits from the left ÷ right tension ratio, since the two sides' sideways pulls must cancel, and suggests the turns on each side that would centre it. On an 11-speed road hub each millimetre toward the drive side moves the ratio about 4 points. Confirm with a dish gauge; an inflated tire skews it toward the tighter side.
+7. **Re-check** and **≈** marks on the Wheel tab: a reading more than 1.6× off the rest of its side is usually the wrong tone (an overtone, or the crossed pair swinging together), so it's left out of the averages and the plan until you re-measure it. Partners marked ≈ read the same pitch to within 0.15%, a sign the pair rang as one; damp the partner and re-measure both.
 
 No microphone handy, or want to measure from a recording? **Analyse a recording** accepts a Voice Memo. Turn off Voice Memos' "Enhance Recording" first.
 
@@ -40,7 +41,7 @@ No microphone handy, or want to measure from a recording? **Analyse a recording*
 | `src/dsp.js` | FFT, pluck detector, spectrum peak finder, candidate scoring (overtone fingerprint, sustain, SNR, bladed-spoke twin modes), pitch-glide correction, overtone cross-check, synthetic plucks |
 | `src/pencil.js` | Matrix pencil method (complex baseband, Jacobi eigensolver) for splitting modes under 1% apart |
 | `src/geometry.js` | Spoke length and interlaced-cross position from wheel geometry |
-| `src/build.js` | Tension per nipple turn and Brandt's balancing plan |
+| `src/build.js` | Tension per nipple turn, Brandt's balancing plan, and dish from the tension balance |
 | `src/spokes.js` | Spoke database (DT Swiss, Sapim, Pillar, Wheelsmith, plain gauge), with sources and the mass-factor rationale |
 | `src/app.js`, `src/index.template.html` | UI, microphone pipeline (AudioWorklet, ScriptProcessor fallback), wheel mapping |
 | `tools/build.mjs` | Inlines everything into one page and writes the deployable site to `dist/site/` (what Pages serves) |
